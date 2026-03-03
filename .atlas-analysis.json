@@ -1,0 +1,118 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Dr.Semu",
+  "projectDescription": "Sandboxed malware detection and classification tool based on dynamic behavior analysis",
+  "theme": "aspen",
+  "primaryColor": "#DC143C",
+  "lightColor": "#FF6B6B",
+  "darkColor": "#8B0000",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Core Concepts",
+            "pages": [
+              "concepts/architecture",
+              "concepts/isolation",
+              "concepts/monitoring",
+              "concepts/detection"
+            ]
+          },
+          {
+            "group": "Usage",
+            "pages": [
+              "usage/cli-reference",
+              "usage/analyzing-samples",
+              "usage/batch-analysis",
+              "usage/reports"
+            ]
+          },
+          {
+            "group": "Detection Rules",
+            "pages": [
+              "rules/overview",
+              "rules/lua-rules",
+              "rules/python-rules",
+              "rules/rule-examples",
+              "rules/best-practices"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/building-from-source",
+              "advanced/virtual-filesystem",
+              "advanced/registry-redirection",
+              "advanced/dynamorio-integration"
+            ]
+          },
+          {
+            "group": "Troubleshooting",
+            "pages": [
+              "troubleshooting/common-issues",
+              "troubleshooting/limitations",
+              "troubleshooting/faq"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "API Reference",
+        "groups": [
+          {
+            "group": "Monitored System Calls",
+            "pages": [
+              "api/filesystem",
+              "api/registry",
+              "api/processes",
+              "api/networking",
+              "api/objects",
+              "api/system"
+            ]
+          },
+          {
+            "group": "Rule API",
+            "pages": [
+              "api/lua-api",
+              "api/python-api",
+              "api/json-schema"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "User-mode isolation using Windows Projected File System (ProjFS)",
+    "Registry virtualization through hive cloning and redirection",
+    "System call interception via DynamoRIO without kernel hooks",
+    "Behavior-based malware detection using Lua and Python rules",
+    "Comprehensive monitoring of filesystem, registry, processes, and network operations",
+    "JSON-based behavior reports for analysis",
+    "Support for both x86 and x64 executables",
+    "Community-driven detection rules"
+  ],
+  "publicApiSurface": [
+    "DrSemu.exe --target <file_path>",
+    "DrSemu.exe --target <directory>",
+    "DrSemu.exe --target <file_path> --cmd_line <arguments>",
+    "DrSemu.exe --target <file_path> --time_limit <seconds>",
+    "Lua rule: check(report_directory)",
+    "Python rule: check(report_directory)",
+    "utils.get_first_process_json(report_directory)",
+    "utils.get_first_static(report_directory)",
+    "utils.get_json_pid(report_directory, pid)",
+    "dr_semu_utils.get_starter_details(report_directory)",
+    "dr_semu_utils.get_json_from_file(file_path)"
+  ]
+}
