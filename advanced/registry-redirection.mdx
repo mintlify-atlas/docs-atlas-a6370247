@@ -125,7 +125,7 @@ bool virtual_registry::save_root_key(std::wstring_view target_key_name) const
 **Location**: `virtual_reg.cpp:53-89`
 
 This uses the Windows `reg save` command to save registry hives. For example:
-```
+```text
 reg save HKLM\SOFTWARE virtual_reg\HKLM\SOFTWARE
 ```
 
@@ -186,7 +186,7 @@ virtual_registry::virtual_registry(const std::wstring& vm_prefix)
 
 After loading, the registry structure looks like:
 
-```
+```text
 HKEY_LOCAL_MACHINE\
   dr_semu_0!SOFTWARE
   dr_semu_0!SYSTEM
@@ -209,12 +209,12 @@ The `!` character separates the VM prefix from the hive name.
 When malware accesses the registry, DynamoRIO intercepts system calls and redirects paths.
 
 For example, accessing:
-```
+```text
 HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows
 ```
 
 Gets redirected to:
-```
+```text
 HKEY_LOCAL_MACHINE\dr_semu_0!SOFTWARE\Microsoft\Windows
 ```
 
@@ -341,7 +341,7 @@ Each handler:
 
 Registry hives are stored on disk:
 
-```
+```text
 virtual_reg/
   HKLM/              # Master copies
     SOFTWARE

@@ -50,7 +50,7 @@ DR_EXPORT void dr_client_main(client_id_t id, int argc, const char* argv[])
 
 Dr.Semu is loaded into the target process:
 
-```
+```text
 drrun.exe -c DrSemu.dll [options] -- malware.exe
 ```
 
@@ -455,7 +455,7 @@ droption_t<unsigned int> time_limit_option(
 **Location**: `DrSemu.cpp:134-146`
 
 Example command line:
-```
+```text
 drrun.exe -c DrSemu.dll -vm 0 -pid 1234 -bin C:\DrSemu\bin \
           -dir C:\temp -report json_reports -limit 60 -- malware.exe
 ```

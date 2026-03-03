@@ -27,7 +27,7 @@ DynamoRIO is a runtime code manipulation system that:
 
 Dr.Semu implements a DynamoRIO **client** - a DLL that hooks into the target process:
 
-```
+```text
 Target.exe
     ↓
 drrun.exe (DynamoRIO runtime)
@@ -321,7 +321,7 @@ Each process gets its own JSON file named by PID (e.g., `1234.json`).
 When malware accesses a file, Dr.Semu translates the path:
 
 **Malware sees**:
-```
+```text
 C:\Windows\System32\cmd.exe
 ```
 

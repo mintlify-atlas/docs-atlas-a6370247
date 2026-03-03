@@ -72,7 +72,7 @@ From the source code in `LauncherCLI/LauncherCLI.cpp`:
 
 While Dr.Semu analyzes the executable, you'll see:
 
-```
+```text
 [VM_1] Connecting to virtual FS/REG...
 [VM_1] Connected to virtual FS/REG!
 [VM_1] virtual FS/REG: SUCCESS
@@ -123,7 +123,7 @@ Example report structure from `DrSemu.cpp`:
 
 After analysis completes, Dr.Semu displays:
 
-```
+```text
 [VM_1] Reports: C:\path\to\reports\random_id
 [VM_1] Scanning...
 Verdict: [Detection Result]
@@ -238,7 +238,7 @@ Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -NoRestart
 **DynamoRIO not found**
 
 Verify the `dynamorio` directory exists in your Dr.Semu folder with the correct structure:
-```
+```text
 dynamorio/
 ├── bin32/drrun.exe
 └── bin64/drrun.exe

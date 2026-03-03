@@ -46,12 +46,12 @@ The virtual filesystem is implemented in `virtual_FS_REG/virtualizationInstance.
 
 Each analysis session gets a unique virtual root:
 
-```
+```text
 %TEMP%\dr_semu_{vm_index}\
 ```
 
 For example:
-```
+```text
 C:\Users\User\AppData\Local\Temp\dr_semu_0\
 C:\Users\User\AppData\Local\Temp\dr_semu_1\
 ```
@@ -90,12 +90,12 @@ Dr.Semu implements several ProjFS callbacks:
 All filesystem operations are transparently redirected:
 
 **Real path (malware's view)**:
-```
+```text
 C:\Windows\System32\notepad.exe
 ```
 
 **Virtual path (actual location)**:
-```
+```text
 C:\Users\User\AppData\Local\Temp\dr_semu_0\Windows\System32\notepad.exe
 ```
 
@@ -155,12 +155,12 @@ Registry virtualization is implemented in `virtual_FS_REG/virtual_reg.cpp`.
 ### Virtual registry structure
 
 Original registry path:
-```
+```text
 HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
 ```
 
 Virtual registry path:
-```
+```text
 dr_semu_0!HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
 ```
 

@@ -21,7 +21,7 @@ Restart your system after enabling ProjFS.
 ### DynamoRIO Not Found
 
 **Error:**
-```
+```text
 Failed to locate drrun.exe
 ```
 
@@ -44,7 +44,7 @@ Install Python 3 x64 from [python.org](https://www.python.org/downloads/). Dr.Se
 ### Invalid File Extension
 
 **Error:**
-```
+```text
 Invalid file extension: <path>
 ```
 
@@ -56,7 +56,7 @@ Dr.Semu only analyzes Windows executable files. Ensure your target file has a `.
 ### Administrator Privileges Required
 
 **Error:**
-```
+```text
 SetCurrentDirectory() failed
 ```
 
@@ -71,7 +71,7 @@ Run Dr.Semu with administrator privileges. Several operations require elevated p
 ### File Not Found
 
 **Error:**
-```
+```text
 No such file/directory: <path>
 ```
 
@@ -88,7 +88,7 @@ See: `LauncherCLI.cpp:106`
 ### Virtual FS/REG Initialization Failed
 
 **Error:**
-```
+```text
 virtual_fs_reg failed
 Failed to start virtualization instance
 ```
@@ -104,7 +104,7 @@ See: `LauncherCLI.cpp:244`, `virtual_FS_REG.cpp:168`
 ### Pipe Connection Failed
 
 **Error:**
-```
+```text
 Failed to make pipe connection
 Failed to connect pipe
 ```
@@ -120,7 +120,7 @@ See: `LauncherCLI.cpp:232`, `virtual_FS_REG.cpp:116`
 ### Registry Virtualization Failed
 
 **Error:**
-```
+```text
 Failed to create virtual Registry
 Failed to load a virtual Registry
 ```
@@ -138,7 +138,7 @@ See: `virtual_reg.cpp:110`, `virtual_reg.cpp:131`
 ### Detection Rules Not Found
 
 **Error:**
-```
+```text
 failed to locate rules directory
 Failed to find run_detections
 ```
@@ -153,7 +153,7 @@ See: `run_detections.cpp:46`, `LauncherCLI.cpp:441`
 ### Detection Execution Failed
 
 **Error:**
-```
+```text
 run_detections failed
 ```
 
@@ -170,7 +170,7 @@ See: `LauncherCLI.cpp:463`
 ### Wrong DynamoRIO Architecture
 
 **Error:**
-```
+```text
 Failed to locate DR client
 ```
 
@@ -201,7 +201,7 @@ Set time limit in seconds. Use `0` to disable the timeout (not recommended for m
 ### Fake Explorer Process Failed
 
 **Error:**
-```
+```text
 Failed to locate a dumb explorer.exe
 Failed to execute fake Explorer under Dr.Semu
 ```

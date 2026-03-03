@@ -39,7 +39,7 @@ LauncherCLI.exe --target "C:\samples\suspicious.exe"
 
 During analysis, you'll see real-time output in the console:
 
-```
+```text
 LauncherCLI for Dr.Semu
 [VM_1] Connecting to virtual FS/REG...
 [VM_1] Connected to virtual FS/REG!
@@ -65,7 +65,7 @@ The analysis runs until:
 - All processes terminate naturally, OR
 - The time limit is reached (default: 120 seconds)
 
-```
+```text
 [VM_1] Running processes:
         PID: 5124
 [VM_1] Fake Explorer [PID - 4928] terminated
@@ -78,13 +78,13 @@ The analysis runs until:
 
 After completion, a modal dialog shows the verdict:
 
-```
+```text
 Verdict: MALICIOUS
 ```
 
 Click OK to see the report location:
 
-```
+```text
 [VM_1] Reports: C:\path\to\DrSemu\xK3mP9nB2qR5vL7
 [VM_1] Scanning...
 Verdict: MALICIOUS
@@ -120,7 +120,7 @@ LauncherCLI.exe --target "dropper.exe" --time_limit 300
 
 Dr.Semu automatically tracks all child processes:
 
-```
+```text
 [VM_1] Running processes:
         PID: 5124
         PID: 5896  # Child process
@@ -133,7 +133,7 @@ Each process gets its own JSON report.
 
 ### VM Instance Information
 
-```
+```text
 [VM_1] Connecting to virtual FS/REG...
 ```
 
@@ -142,7 +142,7 @@ Each process gets its own JSON report.
 
 ### Process Lifecycle
 
-```
+```text
 [VM_1] Starter PID: 5124
 ```
 
@@ -150,7 +150,7 @@ The **Starter PID** is your main sample. Child processes are tracked automatical
 
 ### Analysis Duration
 
-```
+```text
 [event_exit] PID: 5124    Duration: 45 seconds
 ```
 
@@ -158,7 +158,7 @@ Shows how long each process ran.
 
 ### Fake Explorer
 
-```
+```text
 [VM_1] Fake Explorer is under Dr.Semu. PID: 4928
 ```
 
@@ -202,7 +202,7 @@ Watch for multiple processes as the unpacker creates new executables.
 
 Some malware checks for sandboxes. Dr.Semu's virtual FS/REG helps evade detection:
 
-```
+```text
 [VM_1] virtual FS/REG: SUCCESS
 ```
 

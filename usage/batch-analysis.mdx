@@ -39,7 +39,7 @@ LauncherCLI.exe --target "C:\samples\"
 
 Given this directory structure:
 
-```
+```text
 C:\samples\
 ├── malware1.exe
 ├── malware2.exe
@@ -51,7 +51,7 @@ Dr.Semu will analyze `malware1.exe`, `malware2.exe`, and `dropper.exe` in parall
 
 ### Console Output for Batch Analysis
 
-```
+```text
 LauncherCLI for Dr.Semu
 [VM_1] Connecting to virtual FS/REG...
 [VM_2] Connecting to virtual FS/REG...
@@ -132,7 +132,7 @@ Each VM instance consumes significant CPU:
 
 **Recommendation**: Limit concurrent samples based on CPU cores:
 
-```
+```text
 4 cores  → 2-3 samples max
 8 cores  → 4-6 samples max
 16 cores → 8-12 samples max
@@ -162,7 +162,7 @@ Each VM creates:
 
 Batch analysis generates separate report directories for each sample:
 
-```
+```text
 DrSemu\
 ├── xK3mP9nB2qR5vL7\      # VM_1 reports
 │   ├── starter.json
@@ -265,7 +265,7 @@ LauncherCLI.exe --target "C:\samples\to_analyze\"
 
 Watch for completion messages:
 
-```
+```text
 [VM_1] Scanning...
 Verdict: MALICIOUS
 [VM_2] Scanning...
@@ -278,7 +278,7 @@ Verdict: MALICIOUS
 
 Each completed VM shows a modal:
 
-```
+```text
 ┌─────────────────────────────┐
 │ LauncherCLI for Dr.Semu     │
 ├─────────────────────────────┤
