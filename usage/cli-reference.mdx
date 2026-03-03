@@ -1,0 +1,154 @@
+---
+title: CLI Reference
+description: Complete command-line interface reference for Dr.Semu
+---
+
+## Overview
+
+Dr.Semu provides a command-line interface through `LauncherCLI.exe` for analyzing malware samples. The tool accepts either individual executable files or directories containing multiple executables.
+
+## Basic Syntax
+
+```bash
+LauncherCLI.exe --target <path> [options]
+```
+
+## User-Facing Options
+
+These are the primary options you'll use when running Dr.Semu.
+
+<ParamField path="--target" type="string" required>
+  Path to a Windows executable (.exe) file or directory containing executables.
+  
+  - If a **file** is provided: Analyzes that single executable
+  - If a **directory** is provided: Analyzes all .exe files in the directory
+  
+  **Aliases:** `-t`
+  
+  **Example:**
+  ```bash
+  LauncherCLI.exe --target "C:\samples\malware.exe"
+  LauncherCLI.exe --target "C:\samples\"
+  ```
+</ParamField>
+
+<ParamField path="--cmd_line" type="string">
+  Command-line arguments to pass to the target executable.
+  
+  **Aliases:** `-c`
+  
+  **Default:** Empty (no arguments)
+  
+  **Example:**
+  ```bash
+  LauncherCLI.exe --target "sample.exe" --cmd_line "/silent /install"
+  ```
+</ParamField>
+
+<ParamField path="--time_limit" type="integer">
+  Time limit for monitoring the target process, in seconds. The process will be terminated after this duration.
+  
+  **Aliases:** `-l`
+  
+  **Default:** `120` (2 minutes)
+  
+  **Example:**
+  ```bash
+  LauncherCLI.exe --target "sample.exe" --time_limit 300
+  ```
+</ParamField>
+
+## Internal Options
+
+These options are used internally by Dr.Semu's architecture and are passed to the DynamoRIO client. **You should not use these manually.**
+
+<ParamField path="-vm" type="integer" internal>
+  VM instance index number for multi-sample analysis.
+</ParamField>
+
+<ParamField path="-pid" type="integer" internal>
+  Process ID of the fake explorer.exe process.
+</ParamField>
+
+<ParamField path="-bin" type="string" internal>
+  Location of Dr.Semu binaries directory.
+</ParamField>
+
+<ParamField path="-dir" type="string" internal>
+  Virtual machine temporary directory path.
+</ParamField>
+
+<ParamField path="-report" type="string" internal>
+  Report directory name for JSON output.
+</ParamField>
+
+<ParamField path="-main_slot" type="string" internal>
+  Main mailslot name for inter-process communication.
+</ParamField>
+
+<ParamField path="-limit" type="integer" internal>
+  Time limit passed to the DynamoRIO client.
+</ParamField>
+
+## Examples
+
+### Analyze a Single File
+
+```bash
+LauncherCLI.exe --target "C:\malware\ransomware.exe"
+```
+
+### Analyze with Custom Arguments
+
+```bash
+LauncherCLI.exe --target "C:\samples\installer.exe" --cmd_line "/S /D=C:\\Program Files\\App"
+```
+
+### Analyze with Extended Time Limit
+
+```bash
+LauncherCLI.exe --target "C:\samples\dropper.exe" --time_limit 600
+```
+
+### Batch Analyze a Directory
+
+```bash
+LauncherCLI.exe --target "C:\samples\"
+```
+
+This will analyze all .exe files in `C:\samples\` directory, running each in its own VM instance.
+
+## Exit Codes
+
+| Code | Description |
+|------|-------------|
+| `0` | Analysis completed successfully |
+| `-1` | Invalid arguments or file not found |
+
+## Notes
+
+<Note>
+  Dr.Semu only accepts Windows PE executables with `.exe` extension. Other file types will be rejected with an "Invalid file extension" error.
+</Note>
+
+<Warning>
+  Make sure to run `LauncherCLI.exe` with **administrator privileges**, as it needs to create virtual filesystems and launch instrumented processes.
+</Warning>
+
+## Architecture Detection
+
+Dr.Semu automatically detects the target architecture (x86 or x64) and loads the appropriate DynamoRIO client:
+
+- **32-bit executables**: Uses `drsemu_x86.dll` with `dynamorio/bin32/drrun.exe`
+- **64-bit executables**: Uses `drsemu_x64.dll` with `dynamorio/bin64/drrun.exe`
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Analyzing Samples" icon="microscope" href="/usage/analyzing-samples">
+    Learn how to analyze malware samples step-by-step
+  </Card>
+  <Card title="Understanding Reports" icon="file-lines" href="/usage/reports">
+    Interpret the JSON analysis reports
+  </Card>
+</CardGroup>

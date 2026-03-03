@@ -1,0 +1,572 @@
+---
+title: Registry System Calls
+description: Windows Registry system calls monitored by Dr.Semu
+---
+
+Dr.Semu monitors registry operations to track registry key and value manipulations. All registry operations are redirected to a virtual registry to ensure safe analysis.
+
+## Key Operations
+
+### NtOpenKey
+
+Opens an existing registry key.
+
+<ParamField path="KeyHandle" type="PHANDLE">
+  Receives a handle to the registry key
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights for the key
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes identifying the key
+</ParamField>
+
+**Logged Information:**
+- Key path
+- Key handle (after successful operation)
+- Operation success status
+
+---
+
+### NtOpenKeyEx
+
+Extended version of NtOpenKey with additional options.
+
+<ParamField path="KeyHandle" type="PHANDLE">
+  Receives a handle to the registry key
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights for the key
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes identifying the key
+</ParamField>
+
+<ParamField path="OpenOptions" type="ULONG">
+  Options for opening the key
+</ParamField>
+
+**Logged Information:**
+- Key path
+- Key handle (after successful operation)
+- Operation success status
+
+---
+
+### NtCreateKey
+
+Creates a new registry key or opens an existing one.
+
+<ParamField path="KeyHandle" type="PHANDLE">
+  Receives a handle to the registry key
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights for the key
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes of the key to create
+</ParamField>
+
+<ParamField path="CreateOptions" type="ULONG">
+  Options for creating the key
+</ParamField>
+
+<ParamField path="Disposition" type="PULONG" optional>
+  Receives whether a new key was created or existing one opened
+</ParamField>
+
+**Logged Information:**
+- Key path
+- Key handle (after successful operation)
+- Operation success status
+
+---
+
+### NtDeleteKey
+
+Deletes a registry key.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the key to delete
+</ParamField>
+
+---
+
+## Value Operations
+
+### NtSetValueKey
+
+Sets the data for a value entry in a registry key.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key
+</ParamField>
+
+<ParamField path="ValueName" type="PUNICODE_STRING">
+  Name of the value to set
+</ParamField>
+
+<ParamField path="Type" type="ULONG">
+  Type of data (REG_SZ, REG_DWORD, etc.)
+</ParamField>
+
+<ParamField path="Data" type="PVOID">
+  Pointer to the data to set
+</ParamField>
+
+<ParamField path="DataSize" type="ULONG">
+  Size of the data in bytes
+</ParamField>
+
+---
+
+### NtQueryValueKey
+
+Retrieves data for a value entry in a registry key.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key
+</ParamField>
+
+<ParamField path="ValueName" type="PUNICODE_STRING">
+  Name of the value to query
+</ParamField>
+
+<ParamField path="KeyValueInformationClass" type="KEY_VALUE_INFORMATION_CLASS">
+  Type of information to retrieve
+</ParamField>
+
+---
+
+### NtDeleteValueKey
+
+Deletes a value entry from a registry key.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key
+</ParamField>
+
+<ParamField path="ValueName" type="PUNICODE_STRING">
+  Name of the value to delete
+</ParamField>
+
+---
+
+## Enumeration Operations
+
+### NtEnumerateKey
+
+Enumerates subkeys of a registry key.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key
+</ParamField>
+
+<ParamField path="Index" type="ULONG">
+  Zero-based index of the subkey
+</ParamField>
+
+<ParamField path="KeyInformationClass" type="KEY_INFORMATION_CLASS">
+  Type of information to return
+</ParamField>
+
+**Logged Information:**
+- Key path
+- Operation success status
+
+---
+
+### NtEnumerateValueKey
+
+Enumerates value entries in a registry key.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key
+</ParamField>
+
+<ParamField path="Index" type="ULONG">
+  Zero-based index of the value
+</ParamField>
+
+<ParamField path="KeyValueInformationClass" type="KEY_VALUE_INFORMATION_CLASS">
+  Type of information to return
+</ParamField>
+
+---
+
+### NtQueryKey
+
+Retrieves information about a registry key.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key
+</ParamField>
+
+<ParamField path="KeyInformationClass" type="KEY_INFORMATION_CLASS">
+  Type of information to retrieve
+</ParamField>
+
+**Logged Information:**
+- Key path
+- Operation success status
+
+---
+
+## Advanced Key Operations
+
+### NtQueryMultipleValueKey
+
+Retrieves data for multiple value entries in a single call.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key
+</ParamField>
+
+<ParamField path="ValueEntries" type="PKEY_VALUE_ENTRY">
+  Array of value entries to query
+</ParamField>
+
+<ParamField path="EntryCount" type="ULONG">
+  Number of entries in the array
+</ParamField>
+
+---
+
+### NtNotifyChangeKey
+
+Monitors a registry key for changes.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key to monitor
+</ParamField>
+
+<ParamField path="Event" type="HANDLE" optional>
+  Event to signal when changes occur
+</ParamField>
+
+<ParamField path="CompletionFilter" type="ULONG">
+  Types of changes to monitor
+</ParamField>
+
+<ParamField path="WatchTree" type="BOOLEAN">
+  Whether to monitor the entire subtree
+</ParamField>
+
+---
+
+### NtNotifyChangeMultipleKeys
+
+Monitors multiple registry keys for changes.
+
+<ParamField path="MasterKeyHandle" type="HANDLE">
+  Handle to the master key
+</ParamField>
+
+<ParamField path="SubordinateObjects" type="OBJECT_ATTRIBUTES[]" optional>
+  Array of subordinate keys to monitor
+</ParamField>
+
+<ParamField path="CompletionFilter" type="ULONG">
+  Types of changes to monitor
+</ParamField>
+
+**Behavior:**
+Returns STATUS_PENDING to avoid blocking analysis.
+
+---
+
+## Transacted Registry Operations
+
+### NtCreateKeyTransacted
+
+Creates a registry key as part of a transaction.
+
+<ParamField path="KeyHandle" type="PHANDLE">
+  Receives a handle to the registry key
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights for the key
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes of the key to create
+</ParamField>
+
+<ParamField path="TransactionHandle" type="HANDLE">
+  Handle to the transaction
+</ParamField>
+
+---
+
+### NtOpenKeyTransacted
+
+Opens a registry key as part of a transaction.
+
+<ParamField path="KeyHandle" type="PHANDLE">
+  Receives a handle to the registry key
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights for the key
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes identifying the key
+</ParamField>
+
+<ParamField path="TransactionHandle" type="HANDLE">
+  Handle to the transaction
+</ParamField>
+
+---
+
+### NtOpenKeyTransactedEx
+
+Extended version of NtOpenKeyTransacted.
+
+<ParamField path="KeyHandle" type="PHANDLE">
+  Receives a handle to the registry key
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights for the key
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes identifying the key
+</ParamField>
+
+<ParamField path="OpenOptions" type="ULONG">
+  Options for opening the key
+</ParamField>
+
+<ParamField path="TransactionHandle" type="HANDLE">
+  Handle to the transaction
+</ParamField>
+
+---
+
+## Administrative Operations
+
+### NtFlushKey
+
+Flushes registry changes to disk.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the registry key to flush
+</ParamField>
+
+---
+
+### NtCompactKeys
+
+Compacts one or more registry keys.
+
+<ParamField path="Count" type="ULONG">
+  Number of keys in the array
+</ParamField>
+
+<ParamField path="KeyArray" type="HANDLE[]">
+  Array of key handles to compact
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD.
+
+---
+
+### NtCompressKey
+
+Compresses a registry key.
+
+<ParamField path="Key" type="HANDLE">
+  Handle to the key to compress
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD.
+
+---
+
+### NtFreezeRegistry
+
+Freezes the registry to prevent modifications.
+
+<ParamField path="TimeOutInSeconds" type="ULONG">
+  Timeout duration in seconds
+</ParamField>
+
+**Behavior:**
+Returns STATUS_SUCCESS without actually freezing the registry.
+
+---
+
+### NtInitializeRegistry
+
+Initializes the registry.
+
+<ParamField path="BootCondition" type="USHORT">
+  Boot condition flags
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_ACCESS_DENIED.
+
+---
+
+## Key Loading and Saving
+
+### NtLoadKey
+
+Loads a registry hive from a file.
+
+<ParamField path="TargetKey" type="POBJECT_ATTRIBUTES">
+  Target location in the registry
+</ParamField>
+
+<ParamField path="SourceFile" type="POBJECT_ATTRIBUTES">
+  Path to the hive file
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD (requires SE_RESTORE_NAME and SE_BACKUP_NAME privileges).
+
+---
+
+### NtLoadKey2
+
+Extended version of NtLoadKey with flags.
+
+<ParamField path="TargetKey" type="POBJECT_ATTRIBUTES">
+  Target location in the registry
+</ParamField>
+
+<ParamField path="SourceFile" type="POBJECT_ATTRIBUTES">
+  Path to the hive file
+</ParamField>
+
+<ParamField path="Flags" type="ULONG">
+  Load flags
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD.
+
+---
+
+### NtLoadKeyEx
+
+Fully extended version of NtLoadKey.
+
+<ParamField path="TargetKey" type="POBJECT_ATTRIBUTES">
+  Target location in the registry
+</ParamField>
+
+<ParamField path="SourceFile" type="POBJECT_ATTRIBUTES">
+  Path to the hive file
+</ParamField>
+
+<ParamField path="Flags" type="ULONG">
+  Load flags
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK" optional>
+  Desired access to the loaded hive
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD.
+
+---
+
+### NtSaveKey
+
+Saves a registry key to a file.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the key to save
+</ParamField>
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the destination file
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD (requires SE_BACKUP_NAME privilege).
+
+---
+
+### NtSaveKeyEx
+
+Extended version of NtSaveKey with format option.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the key to save
+</ParamField>
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the destination file
+</ParamField>
+
+<ParamField path="Format" type="ULONG">
+  Save format
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD.
+
+---
+
+### NtLockRegistryKey
+
+Locks a registry key to prevent deletion.
+
+<ParamField path="KeyHandle" type="HANDLE">
+  Handle to the key to lock
+</ParamField>
+
+**Access Control:**
+Denied with STATUS_PRIVILEGE_NOT_HELD.
+
+---
+
+### NtQueryOpenSubKeys
+
+Queries the number of open subkeys.
+
+<ParamField path="TargetKey" type="POBJECT_ATTRIBUTES">
+  Target key to query
+</ParamField>
+
+<ParamField path="HandleCount" type="PULONG">
+  Receives the count of open handles
+</ParamField>
+
+---
+
+### NtQueryOpenSubKeysEx
+
+Extended version of NtQueryOpenSubKeys.
+
+<ParamField path="TargetKey" type="POBJECT_ATTRIBUTES">
+  Target key to query
+</ParamField>
+
+<ParamField path="BufferLength" type="ULONG">
+  Length of the output buffer
+</ParamField>
+
+<ParamField path="Buffer" type="PVOID">
+  Buffer to receive information
+</ParamField>
+
+<ParamField path="RequiredSize" type="PULONG">
+  Receives the required buffer size
+</ParamField>

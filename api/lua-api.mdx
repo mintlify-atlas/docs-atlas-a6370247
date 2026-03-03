@@ -1,0 +1,224 @@
+---
+title: 'Lua Rule API'
+description: 'Complete reference for writing detection rules in Lua'
+---
+
+## Overview
+
+The Lua Rule API provides utilities for writing custom detection rules. Rules must implement a `check()` function that analyzes malware reports and returns a detection verdict.
+
+## Rule Structure
+
+Every Lua rule must follow this structure:
+
+```lua
+utils = require "utils"
+
+function check(report_directory)
+    local status = "CLEAN"
+    
+    -- Your detection logic here
+    
+    return status
+end
+```
+
+### check Function
+
+<ParamField path="report_directory" type="string" required>
+  Path to the directory containing analysis report JSON files
+</ParamField>
+
+<ResponseField name="return" type="string">
+  Detection verdict. Return "CLEAN" for benign files, or a malware family name (e.g., "Win32.EICAR.Dr", "Dr.Semu!TEST") for detections
+</ResponseField>
+
+## Utils Module
+
+The `utils` module provides helper functions for accessing report data.
+
+### utils.get_first_process_json
+
+Retrieves the dynamic analysis JSON for the starter process.
+
+```lua
+local first_dynamic = utils.get_first_process_json(report_directory)
+```
+
+<ParamField path="report_directory" type="string" required>
+  Path to the report directory
+</ParamField>
+
+<ResponseField name="return" type="table">
+  Lua table containing dynamic analysis data with Windows API calls, or `nil` if not available. Each element in the table represents a logged API call.
+</ResponseField>
+
+**Implementation Details:**
+- Reads `starter.json` to get the starter process PID
+- Returns the dynamic JSON for that PID
+- Returns `nil` if starter.json is empty or missing required fields
+
+### utils.get_first_static
+
+Retrieves the static analysis JSON for the starter executable.
+
+```lua
+local first_static = utils.get_first_static(report_directory)
+```
+
+<ParamField path="report_directory" type="string" required>
+  Path to the report directory
+</ParamField>
+
+<ResponseField name="return" type="table">
+  Lua table containing static analysis data (PE information, imports, etc.), or `nil` if not available. Contains a `generic` field with properties like `is_x86`.
+</ResponseField>
+
+**Implementation Details:**
+- Reads `starter.json` to get the SHA-256 hash
+- Returns the static analysis JSON for that hash
+- Returns `nil` if starter.json is empty
+
+### utils.get_json_pid
+
+Retrieves the dynamic analysis JSON for a specific process ID.
+
+```lua
+local decoded_json = utils.get_json_pid(report_directory, target_PID)
+```
+
+<ParamField path="report_directory" type="string" required>
+  Path to the report directory
+</ParamField>
+
+<ParamField path="pid" type="string" required>
+  Process ID to retrieve
+</ParamField>
+
+<ResponseField name="return" type="table">
+  Lua table containing dynamic analysis data for the specified PID. Check the `empty` field to verify if data is available.
+</ResponseField>
+
+**Use Case:** Track child processes created during execution by extracting PIDs from `NtCreateUserProcess` calls.
+
+### utils.get_json_from_path
+
+Low-level function to read and parse any JSON file.
+
+```lua
+local decoded = utils.get_json_from_path(json_path)
+```
+
+<ParamField path="json_path" type="string" required>
+  Full path to a JSON file
+</ParamField>
+
+<ResponseField name="return" type="table">
+  Lua table containing the parsed JSON data
+</ResponseField>
+
+### utils.read_content
+
+Low-level function to read file contents as a string.
+
+```lua
+local content = utils.read_content(json_path)
+```
+
+<ParamField path="json_path" type="string" required>
+  Full path to a file
+</ParamField>
+
+<ResponseField name="return" type="string">
+  File contents as a string
+</ResponseField>
+
+## Example Rule
+
+This example detects execution of `whoami.exe` and malicious registry key creation:
+
+```lua
+utils = require "utils"
+
+function check(report_directory)
+    local status = "CLEAN"
+    
+    local first_dynamic = utils.get_first_process_json(report_directory)
+    local first_static = utils.get_first_static(report_directory)
+    
+    -- Check static information
+    local is_x86 = false
+    if first_static ~= nil then
+        is_x86 = first_static.generic.is_x86
+    end
+    
+    -- Check dynamic behavior
+    if first_dynamic ~= nil then
+        for index, win_func in pairs(first_dynamic) do
+            
+            -- Check for process creation
+            if win_func.NtCreateUserProcess then
+                if win_func.NtCreateUserProcess.success == true then
+                    local target_PID = win_func.NtCreateUserProcess.after.proc_id
+                    local decoded_json = utils.get_json_pid(report_directory, target_PID)
+                    if not decoded_json.empty then
+                        -- Enumerate child process calls
+                    end
+                end
+                
+                -- Check image path
+                if win_func.NtCreateUserProcess.before.image_path ~= nil then
+                    if win_func.NtCreateUserProcess.before.image_path:find("whoami") then
+                        return "WHOAMI!EXE"
+                    end
+                end
+            end
+            
+            -- Check for registry key creation
+            if win_func.NtCreateKey and win_func.NtCreateKey.success == true then
+                if win_func.NtCreateKey.before.key_path:find("malicious_key_for_dr_semu") then
+                    return "Dr.Semu!TEST"
+                end
+            end
+        end
+    end
+    
+    return status
+end
+```
+
+## API Call Structure
+
+Each API call in the dynamic JSON follows this pattern:
+
+```lua
+{
+    ["FunctionName"] = {
+        success = true,  -- boolean indicating if the call succeeded
+        before = {       -- parameters before execution
+            -- function-specific fields
+        },
+        after = {        -- results after execution
+            -- function-specific fields
+        }
+    }
+}
+```
+
+### Common API Calls
+
+**NtCreateUserProcess** - Process creation
+- `before.image_path`: Path to the executable
+- `after.proc_id`: PID of the created process
+
+**NtCreateKey** - Registry key creation
+- `before.key_path`: Registry key path
+- `success`: Whether the key was created successfully
+
+## Best Practices
+
+1. **Always check for nil**: Verify that `first_dynamic` and `first_static` are not nil before accessing them
+2. **Iterate all calls**: Use `pairs()` to enumerate all API calls in the dynamic JSON
+3. **Check success flags**: Verify `success == true` before processing call results
+4. **Track child processes**: Use `get_json_pid()` to analyze child process behavior
+5. **Return specific verdicts**: Use descriptive malware family names instead of generic strings

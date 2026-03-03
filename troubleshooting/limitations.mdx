@@ -1,0 +1,341 @@
+---
+title: Known Limitations
+description: Current limitations and constraints of Dr.Semu
+---
+
+## Operating System Limitations
+
+### Windows Version Requirements
+
+Dr.Semu has strict Windows version requirements due to underlying technology dependencies:
+
+#### Minimum Version: Windows 10, version 1809
+
+**Reason:** Windows Projected File System (ProjFS) requirement
+
+Dr.Semu uses ProjFS to provide virtual filesystem isolation. ProjFS was introduced in Windows 10 version 1809 and is not available in earlier versions.
+
+**Impact:** Dr.Semu cannot run on:
+- Windows 7
+- Windows 8/8.1
+- Windows 10 versions prior to 1809
+- Windows Server versions without ProjFS support
+
+See: `README.md:90`
+
+#### Maximum Version: Windows 10, version 1809
+
+**Reason:** DynamoRIO compatibility limitation
+
+The version of DynamoRIO used by Dr.Semu supports Windows 10 versions up to 1809. Newer Windows versions may have incompatibilities with DynamoRIO's dynamic instrumentation.
+
+**Impact:** Dr.Semu may not work correctly on:
+- Windows 10 versions newer than 1809 (19H1+)
+- Windows 11
+- Windows Server 2019/2022 (depending on build)
+
+See: `README.md:91`
+
+<Warning>
+Dr.Semu is designed for and tested on Windows 10 version 1809 only. Running on other versions may result in:
+- Instrumentation failures
+- Incorrect behavior monitoring
+- System instability
+- Incomplete analysis results
+</Warning>
+
+## Isolation Limitations
+
+### Known Isolation Issues
+
+**Status:** Work in progress
+
+The isolation mechanism has known issues that are being actively addressed.
+
+See: `README.md:83` (TODO item)
+
+#### Filesystem Isolation
+
+While ProjFS provides virtualization, some filesystem operations may bypass the virtual layer:
+
+- Direct kernel-mode filesystem access
+- Low-level disk operations
+- Operations on non-virtualized paths
+- Network share access
+
+#### Registry Isolation
+
+The registry redirection approach has limitations:
+
+- Some registry keys cannot be virtualized (e.g., system-critical keys)
+- Registry operations during system initialization may not be captured
+- Transacted registry operations have limited support
+- Performance-sensitive registry access may be affected
+
+See: `virtual_reg.cpp`
+
+#### Process Isolation
+
+Processes created by the monitored executable have partial isolation:
+
+- Child processes are monitored but share some system resources
+- Process injection techniques may bypass monitoring
+- Processes with higher privileges may escape the sandbox
+- Cross-process communication is not fully isolated
+
+#### Object Isolation
+
+Kernel object isolation has constraints:
+
+- Global objects may be visible across isolation boundaries
+- Named objects (mutexes, events, etc.) may conflict
+- COM objects may interact with the real system
+
+See: `DrSemu.cpp:699-735`, `object_handlers.hpp`
+
+## Monitoring Limitations
+
+### System Call Coverage
+
+Dr.Semu intercepts system calls at the user-kernel boundary using DynamoRIO:
+
+**Monitored:**
+- File operations (NtCreateFile, NtWriteFile, etc.)
+- Registry operations (NtOpenKey, NtSetValueKey, etc.)
+- Process/thread operations (NtCreateUserProcess, etc.)
+- Network operations (via API hooks)
+- COM operations (via API hooks)
+
+**Not Monitored:**
+- Direct kernel-mode operations
+- Hardware interactions
+- Some undocumented system calls
+- Future/unknown Windows APIs
+
+See: `DrSemu.cpp:414-741`
+
+### Performance Impact
+
+Dynamic instrumentation introduces overhead:
+
+- Execution speed: 2-10x slower than native execution
+- Memory usage: Increased due to instrumentation and virtualization
+- Disk I/O: Additional overhead from virtual filesystem
+
+This may affect:
+- Time-sensitive malware that checks execution speed
+- Performance benchmarking accuracy
+- Large-scale analysis throughput
+
+### Anti-Analysis Detection
+
+Sophisticated malware may detect Dr.Semu through:
+
+1. **DynamoRIO Artifacts:**
+   - DLL injection detection
+   - Memory scanning for instrumentation
+   - Timing analysis
+
+2. **Virtual Environment Detection:**
+   - Filesystem anomalies in virtual paths
+   - Registry key patterns (dr_semu_* prefix)
+   - Process name detection (drrun.exe)
+
+3. **Behavioral Detection:**
+   - Execution slowdown from instrumentation
+   - Fake explorer.exe process
+   - Predictable random values
+
+See: `DrSemu.cpp:271-274` (process names)
+
+## Architecture Limitations
+
+### Supported Architectures
+
+**Supported:**
+- x86 (32-bit) executables
+- x64 (64-bit) executables
+
+**Not Supported:**
+- ARM executables
+- Mixed-mode executables with unusual architectures
+- Non-PE executable formats
+
+See: `LauncherCLI.cpp:564-575`
+
+### 32-bit on 64-bit
+
+WOW64 executables (32-bit on 64-bit Windows) are supported, but may have additional limitations:
+
+- Some system calls may behave differently
+- Registry redirection is more complex
+- File system redirection has additional layers
+
+See: `DrSemu.cpp:234`
+
+## Synchronization Issues
+
+### Concurrency Limitations
+
+**Status:** Known issue requiring improvement
+
+See: `README.md:84` (TODO item)
+
+Current synchronization has limitations:
+
+- Race conditions may occur with multiple threads
+- Virtual filesystem concurrent access has limited thread support
+- Process tracking with child processes may have timing issues
+
+See: `LauncherCLI.cpp:398-406` (5-second sleep workaround for child process synchronization)
+
+### Thread Count
+
+Virtual filesystem has thread count constraints:
+
+```cpp
+fs_options.ConcurrentThreadCount = 1;
+fs_options.PoolThreadCount = 1;
+```
+
+See: `virtual_FS_REG.cpp:141-142`
+
+This limits concurrent filesystem operations and may impact performance.
+
+## Detection Rule Limitations
+
+### Language Support
+
+**Currently Supported:**
+- Python rules
+- Lua rules
+
+**Limitations:**
+- Rules must be manually written
+- No automatic rule generation
+- Community detection rules may be incomplete
+- Rule updates are manual
+
+See: `README.md:33-39`
+
+### Analysis Scope
+
+Detection rules only analyze:
+
+- Dynamic behavior captured in JSON reports
+- Static information from PE headers
+
+**Not Analyzed:**
+- Encrypted/packed code sections (unless unpacked at runtime)
+- Code that never executes
+- Dormant/time-bomb malware that doesn't activate
+- Network payloads that aren't downloaded
+
+## Execution Limitations
+
+### Time Limit
+
+Default execution time limit: 120 seconds
+
+See: `LauncherCLI.cpp:93`
+
+**Impact:**
+- Long-running applications may be terminated prematurely
+- Delayed malware behavior may not be captured
+- Installers with user interaction will timeout
+
+**Workaround:** Use `--time_limit` parameter
+
+### Interactive Applications
+
+Dr.Semu is designed for automated analysis:
+
+**Limitations with:**
+- GUI applications requiring user input
+- Installers with interactive prompts
+- Applications that wait for user events
+- Applications displaying message boxes
+
+See: `LauncherCLI.cpp:659` (SW_SHOW parameter)
+
+### Network Limitations
+
+Network simulation has constraints:
+
+- Internet can be disabled but not fully simulated
+- No fake network services (C2 servers, etc.)
+- DNS resolution may fail for malicious domains
+- SSL/TLS connections may fail without valid endpoints
+
+See: `DrSemu.cpp:148`, `networking_handlers.hpp`
+
+## Report Generation Limitations
+
+### JSON Report Format
+
+Reports are generated in JSON format only:
+
+- No built-in HTML/PDF report generation
+- No visualization tools included
+- Manual analysis of JSON required
+- No automatic report comparison
+
+See: `DrSemu.cpp:369-392`
+
+### Temporary Reports
+
+Reports are stored temporarily and deleted after analysis:
+
+```cpp
+fs::remove_all(report_directory, error_code);
+```
+
+See: `LauncherCLI.cpp:473`
+
+**Impact:** Reports must be copied before analysis completes if you need to retain them.
+
+## Development Stage Limitations
+
+<Warning>
+Dr.Semu is in early development stage.
+</Warning>
+
+See: `README.md:8`
+
+**Implications:**
+
+- API may change without notice
+- Bugs and stability issues are expected
+- Documentation may be incomplete
+- Production use is not recommended
+- No official support or SLA
+- Breaking changes may occur
+
+### Missing Features
+
+**TODO items** from the project roadmap:
+
+1. Solve isolation related issues
+2. Improve synchronization
+3. Update the description, add more details
+4. Create a GUI for the tool
+
+See: `README.md:81-86`
+
+## Recommended Use Cases
+
+Given these limitations, Dr.Semu is best suited for:
+
+- Research and learning about malware analysis
+- Initial automated triage of suspicious executables
+- Behavioral analysis on Windows 10 1809 systems
+- Development of detection rules
+- Academic projects
+
+**Not Recommended For:**
+
+- Production malware analysis infrastructure
+- Analysis of modern Windows 10/11 malware
+- High-security environments
+- Real-time threat detection
+- Compliance-critical applications

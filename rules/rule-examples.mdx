@@ -1,0 +1,470 @@
+---
+title: Rule Examples
+description: Real-world detection rules from the Dr.Semu source code
+---
+
+This page showcases actual detection rules from the Dr.Semu codebase, demonstrating practical implementations of both Lua and Python rules.
+
+## WannaCry Kill Switch Detection
+
+This Lua rule detects WannaCry ransomware by identifying its kill switch URL.
+
+**File:** `run_detections/dr_rules_files/wannacry_url.lua`
+
+```lua
+utils = require "utils"
+
+function check(report_directory)
+
+    local status = "CLEAN"
+
+    -- open the first json file and read content
+    local first_dynamic = utils.get_first_process_json(report_directory)
+    local first_static = utils.get_first_static(report_directory)
+
+    -- static information
+    local is_x86 = false
+    if first_static ~= nil then
+        is_x86 = first_static.generic.is_x86
+    end
+
+    -- dynamic information
+    if first_dynamic ~= nil then
+        -- enumerate json
+        for index, win_func in pairs(first_dynamic) do
+
+            if win_func.InternetOpenUrlA and win_func.InternetOpenUrlA.before.url then
+                local url = win_func.InternetOpenUrlA.before.url:lower()
+                if url == "http://www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com" then
+                    return "Win32.WannaCry.DR"
+                end
+            end
+
+        end
+    end
+    
+    return status
+end
+```
+
+<Info>
+This rule demonstrates network behavior analysis by monitoring `InternetOpenUrlA` API calls for the specific kill switch domain used by WannaCry.
+</Info>
+
+### Key Techniques
+
+- **Static + Dynamic Analysis**: Loads both static and dynamic data (though only dynamic is used)
+- **API Monitoring**: Watches `InternetOpenUrlA` for network connections
+- **Case-Insensitive Matching**: Uses `string:lower()` for robust URL comparison
+- **Null Safety**: Checks for `nil` before accessing nested fields
+
+## EICAR Test Detection
+
+This Python rule detects samples that spawn the EICAR test file executable.
+
+**File:** `run_detections/dr_rules_files/dr_semu_eicar.py`
+
+```python
+import json
+import os
+
+import dr_semu_utils
+
+# don't forget to add module names into py_imports.config file
+
+def check(report_directory):
+    
+    image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+    static_info = dr_semu_utils.get_json_from_file(report_directory + b"\\" + sha_256.encode() + b".json")
+    dynamic_info = dr_semu_utils.get_json_from_file(report_directory + b"\\" + str(pid).encode() + b".json")
+
+    # code here
+    verdict = b"CLEAN"
+
+    for win_func in dynamic_info:
+        if "NtCreateUserProcess" in win_func:
+            image_path = win_func["NtCreateUserProcess"]["before"]["image_path"]
+            if image_path.lower().endswith("drsemu_eicar.exe"):
+                return b"Win32.EICAR.Dr"
+
+    return verdict
+
+
+if __name__ == "__main__":
+    pass
+```
+
+<Info>
+This rule demonstrates process creation monitoring to detect when malware spawns specific executables.
+</Info>
+
+### Key Techniques
+
+- **Process Monitoring**: Watches `NtCreateUserProcess` for child process creation
+- **Path Analysis**: Examines the image path of spawned processes
+- **Case-Insensitive Matching**: Uses `lower()` and `endswith()` for flexible detection
+- **Bytes Handling**: Properly returns verdict as bytes (`b"..."`) as required
+
+## Sample Rule Template
+
+This comprehensive Lua template demonstrates multiple detection techniques.
+
+**File:** `run_detections/dr_rules_files/sample_rule.lua`
+
+```lua
+utils = require "utils"
+
+function check(report_directory)
+
+    local status = "CLEAN"
+
+    -- open the first json file and read content
+    local first_dynamic = utils.get_first_process_json(report_directory)
+    local first_static = utils.get_first_static(report_directory)
+
+    -- static information
+    local is_x86 = false
+    if first_static ~= nil then
+        is_x86 = first_static.generic.is_x86
+    end
+
+    -- dynamic information
+    if first_dynamic ~= nil then
+        -- enumerate json
+        for index, win_func in pairs(first_dynamic) do
+
+            -- get information from a call, e.g. if the call is NtCreateUserProcess
+            if win_func.NtCreateUserProcess then
+                -- Get a PID of a new process, with PID we can enumerate calls from a new process
+                if win_func.NtCreateUserProcess.success == true then
+                    local target_PID = win_func.NtCreateUserProcess.after.proc_id
+                    local decoded_json = utils.get_json_pid(report_directory, target_PID)
+                    if not decoded_json.empty then
+                        -- enumerate a json of the child process
+                    end
+                end
+
+                -- and check the new process parameters 
+                if win_func.NtCreateUserProcess.before.image_path ~= nil then
+                    if win_func.NtCreateUserProcess.before.image_path:find("whoami") then
+                        return "WHOAMI!EXE"
+                    end
+                end
+            end
+
+            -- other check for reg key creation
+            if win_func.NtCreateKey and win_func.NtCreateKey.success == true then
+            	if win_func.NtCreateKey.before.key_path:find("malicious_key_for_dr_semu") then
+            		return "Dr.Semu!TEST"
+            	end
+            end
+
+        end
+    end
+    
+    return status
+end
+```
+
+<Info>
+This template showcases multiple detection patterns including child process analysis, registry monitoring, and path-based detection.
+</Info>
+
+### Key Techniques
+
+1. **Child Process Analysis** (lines 23-36)
+   - Extracts child process PID from `NtCreateUserProcess.after.proc_id`
+   - Loads child process JSON using `utils.get_json_pid()`
+   - Allows recursive analysis of process trees
+
+2. **Process Path Detection** (lines 39-44)
+   - Checks image path of spawned processes
+   - Uses `string:find()` for substring matching
+   - Detects suspicious tools like `whoami.exe`
+
+3. **Registry Key Monitoring** (lines 47-51)
+   - Watches `NtCreateKey` for registry operations
+   - Checks success status before analyzing
+   - Matches suspicious registry key paths
+
+4. **Static Analysis Integration** (lines 17-20)
+   - Extracts PE metadata like architecture
+   - Can combine static and dynamic indicators
+
+## Detection Patterns
+
+### Network IOC Detection
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    -- From wannacry_url.lua
+    if win_func.InternetOpenUrlA and win_func.InternetOpenUrlA.before.url then
+        local url = win_func.InternetOpenUrlA.before.url:lower()
+        if url == "http://www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com" then
+            return "Win32.WannaCry.DR"
+        end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    # Network IOC detection pattern
+    for win_func in dynamic_info:
+        if "InternetOpenUrlA" in win_func:
+            url = win_func["InternetOpenUrlA"]["before"]["url"].lower()
+            if url == "http://malicious-domain.com":
+                return b"Win32.Malware.DR"
+    ```
+  </Tab>
+</Tabs>
+
+### Process Spawning Detection
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    -- From sample_rule.lua
+    if win_func.NtCreateUserProcess then
+        if win_func.NtCreateUserProcess.before.image_path ~= nil then
+            if win_func.NtCreateUserProcess.before.image_path:find("whoami") then
+                return "WHOAMI!EXE"
+            end
+        end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    # From dr_semu_eicar.py
+    for win_func in dynamic_info:
+        if "NtCreateUserProcess" in win_func:
+            image_path = win_func["NtCreateUserProcess"]["before"]["image_path"]
+            if image_path.lower().endswith("drsemu_eicar.exe"):
+                return b"Win32.EICAR.Dr"
+    ```
+  </Tab>
+</Tabs>
+
+### Registry Persistence Detection
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    -- From sample_rule.lua
+    if win_func.NtCreateKey and win_func.NtCreateKey.success == true then
+        if win_func.NtCreateKey.before.key_path:find("malicious_key_for_dr_semu") then
+            return "Dr.Semu!TEST"
+        end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    # Registry persistence detection
+    for win_func in dynamic_info:
+        if "NtCreateKey" in win_func:
+            if win_func["NtCreateKey"]["success"]:
+                key_path = win_func["NtCreateKey"]["before"]["key_path"]
+                if "Run" in key_path or "RunOnce" in key_path:
+                    return b"Win32.Persistence.Registry"
+    ```
+  </Tab>
+</Tabs>
+
+### Child Process Analysis
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    -- From sample_rule.lua
+    if win_func.NtCreateUserProcess then
+        if win_func.NtCreateUserProcess.success == true then
+            local target_PID = win_func.NtCreateUserProcess.after.proc_id
+            local decoded_json = utils.get_json_pid(report_directory, target_PID)
+            if not decoded_json.empty then
+                -- enumerate a json of the child process
+                for index, child_func in pairs(decoded_json) do
+                    -- Analyze child behavior
+                end
+            end
+        end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    # Child process analysis
+    for win_func in dynamic_info:
+        if "NtCreateUserProcess" in win_func:
+            if win_func["NtCreateUserProcess"]["success"]:
+                child_pid = win_func["NtCreateUserProcess"]["after"]["proc_id"]
+                child_json = dr_semu_utils.get_json_from_file(
+                    report_directory + b"\\" + str(child_pid).encode() + b".json"
+                )
+                if child_json:
+                    for child_func in child_json:
+                        # Analyze child behavior
+                        pass
+    ```
+  </Tab>
+</Tabs>
+
+## Real-World Use Cases
+
+### Ransomware Detection
+
+Combining multiple indicators from the examples:
+
+```lua
+utils = require "utils"
+
+function check(report_directory)
+    local status = "CLEAN"
+    local first_dynamic = utils.get_first_process_json(report_directory)
+    
+    if first_dynamic ~= nil then
+        local created_suspicious_file = false
+        local accessed_kill_switch = false
+        
+        for index, win_func in pairs(first_dynamic) do
+            -- Check for kill switch URL (WannaCry pattern)
+            if win_func.InternetOpenUrlA and win_func.InternetOpenUrlA.before.url then
+                local url = win_func.InternetOpenUrlA.before.url:lower()
+                if url:find("iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea") then
+                    accessed_kill_switch = true
+                end
+            end
+            
+            -- Check for file creation with suspicious extensions
+            if win_func.NtCreateFile then
+                local file_path = win_func.NtCreateFile.before.file_path
+                if file_path and file_path:find("\.wncry$") then
+                    created_suspicious_file = true
+                end
+            end
+        end
+        
+        if accessed_kill_switch and created_suspicious_file then
+            return "Win32.WannaCry.DR"
+        end
+    end
+    
+    return status
+end
+```
+
+### Information Stealer Detection
+
+Building on the sample rule patterns:
+
+```python
+import dr_semu_utils
+
+def check(report_directory):
+    verdict = b"CLEAN"
+    
+    image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+    dynamic_info = dr_semu_utils.get_json_from_file(
+        report_directory + b"\\" + str(pid).encode() + b".json"
+    )
+    
+    if not dynamic_info:
+        return verdict
+    
+    spawned_recon = False
+    accessed_credentials = False
+    
+    for win_func in dynamic_info:
+        # Check for reconnaissance tools (from sample_rule pattern)
+        if "NtCreateUserProcess" in win_func:
+            img = win_func["NtCreateUserProcess"]["before"]["image_path"].lower()
+            if "whoami" in img or "ipconfig" in img or "netstat" in img:
+                spawned_recon = True
+        
+        # Check for credential file access
+        if "NtCreateFile" in win_func:
+            file_path = win_func["NtCreateFile"]["before"]["file_path"].lower()
+            if "credential" in file_path or "passwords" in file_path:
+                accessed_credentials = True
+    
+    if spawned_recon and accessed_credentials:
+        return b"Win32.InfoStealer.DR"
+    
+    return verdict
+```
+
+## Lessons from Examples
+
+<AccordionGroup>
+  <Accordion title="Always validate data exists">
+    All examples check for `nil`/`None` before accessing data:
+    
+    **Lua:**
+    ```lua
+    if first_static ~= nil then
+        is_x86 = first_static.generic.is_x86
+    end
+    ```
+    
+    **Python:**
+    ```python
+    if not dynamic_info:
+        return verdict
+    ```
+  </Accordion>
+  
+  <Accordion title="Use case-insensitive comparisons">
+    All string matching uses lowercase conversion:
+    
+    **Lua:**
+    ```lua
+    local url = win_func.InternetOpenUrlA.before.url:lower()
+    ```
+    
+    **Python:**
+    ```python
+    if image_path.lower().endswith("drsemu_eicar.exe"):
+    ```
+  </Accordion>
+  
+  <Accordion title="Check API call success">
+    Verify operations succeeded before using results:
+    
+    ```lua
+    if win_func.NtCreateKey.success == true then
+        -- Safe to access results
+    end
+    ```
+  </Accordion>
+  
+  <Accordion title="Return immediately on detection">
+    All examples return as soon as malware is detected:
+    
+    ```lua
+    if suspicious_pattern then
+        return "Malware.Detected"  -- Stop processing
+    end
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Lua Rules" icon="code" href="/rules/lua-rules">
+    Learn Lua rule API reference
+  </Card>
+  
+  <Card title="Python Rules" icon="python" href="/rules/python-rules">
+    Learn Python rule API reference
+  </Card>
+  
+  <Card title="Best Practices" icon="lightbulb" href="/rules/best-practices">
+    Optimize your rule development
+  </Card>
+</CardGroup>

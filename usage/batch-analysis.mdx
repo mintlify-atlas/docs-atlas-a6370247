@@ -1,0 +1,420 @@
+---
+title: Batch Analysis
+description: Efficiently analyze multiple malware samples using Dr.Semu's directory mode
+---
+
+## Overview
+
+Dr.Semu supports analyzing multiple executables in a single command by passing a directory path to `--target`. Each sample runs in its own isolated VM instance with parallel execution.
+
+## How Batch Analysis Works
+
+When you provide a directory path:
+
+1. **Discovery**: Dr.Semu scans the directory for all `.exe` files
+2. **VM Assignment**: Each executable gets its own VM instance (`VM_1`, `VM_2`, etc.)
+3. **Parallel Execution**: All samples run simultaneously in separate threads
+4. **Independent Monitoring**: Each VM has its own virtual FS/REG and tracking
+5. **Separate Reports**: Each sample generates independent JSON reports
+
+```cpp
+// From LauncherCLI.cpp:167-175
+for (const auto& file_path : fs::directory_iterator(target_directory))
+{
+    const auto target_file_path = file_path.path().wstring();
+    if (fs::is_regular_file(target_file_path) && target_file_path.ends_with(L".exe"))
+    {
+        target_directory_files.emplace_back(target_file_path);
+    }
+}
+```
+
+## Basic Usage
+
+### Analyze All Executables in a Directory
+
+```bash
+LauncherCLI.exe --target "C:\samples\"
+```
+
+Given this directory structure:
+
+```
+C:\samples\
+├── malware1.exe
+├── malware2.exe
+├── dropper.exe
+└── readme.txt  # Ignored (not .exe)
+```
+
+Dr.Semu will analyze `malware1.exe`, `malware2.exe`, and `dropper.exe` in parallel.
+
+### Console Output for Batch Analysis
+
+```
+LauncherCLI for Dr.Semu
+[VM_1] Connecting to virtual FS/REG...
+[VM_2] Connecting to virtual FS/REG...
+[VM_3] Connecting to virtual FS/REG...
+[VM_1] Connected to virtual FS/REG!
+[VM_2] Connected to virtual FS/REG!
+[VM_3] Connected to virtual FS/REG!
+[VM_1] virtual FS/REG: SUCCESS
+[Dr.Semu] File path: C:\samples\malware1.exe
+[VM_2] virtual FS/REG: SUCCESS
+[Dr.Semu] File path: C:\samples\malware2.exe
+[VM_3] virtual FS/REG: SUCCESS
+[Dr.Semu] File path: C:\samples\dropper.exe
+[VM_1] Starter PID: 5124
+[VM_2] Starter PID: 5896
+[VM_3] Starter PID: 6204
+```
+
+Notice how each VM instance operates independently.
+
+## Advanced Configuration
+
+### Custom Time Limit for All Samples
+
+```bash
+LauncherCLI.exe --target "C:\samples\" --time_limit 300
+```
+
+Applies a 5-minute time limit to **every** sample in the directory.
+
+### Command-Line Arguments (All Samples)
+
+```bash
+LauncherCLI.exe --target "C:\installers\" --cmd_line "/silent"
+```
+
+<Warning>
+  The same command-line arguments are passed to **all** executables. This is useful when analyzing multiple variants of the same malware family.
+</Warning>
+
+## Parallel Execution Architecture
+
+Dr.Semu uses C++ threading to run samples in parallel:
+
+```cpp
+// From LauncherCLI.cpp:476-487
+std::vector<std::thread> threads{};
+size_t vm_index = 1;
+for (const auto& current_application : target_directory_files)
+{
+    threads.emplace_back(vm_thread_function, current_application, vm_index);
+    vm_index++;
+}
+
+std::for_each(threads.begin(), threads.end(), [](auto& thread_object)
+{
+    thread_object.join();
+});
+```
+
+Each thread:
+
+1. Creates a virtual FS/REG instance
+2. Launches a fake Explorer
+3. Executes the sample under DynamoRIO
+4. Generates reports
+5. Cleans up resources
+
+## Resource Considerations
+
+### CPU Usage
+
+Each VM instance consumes significant CPU:
+
+- **DynamoRIO instrumentation**: High CPU overhead
+- **Malware execution**: Variable CPU usage
+- **Virtual FS/REG**: Moderate CPU for I/O interception
+
+**Recommendation**: Limit concurrent samples based on CPU cores:
+
+```
+4 cores  → 2-3 samples max
+8 cores  → 4-6 samples max
+16 cores → 8-12 samples max
+```
+
+### Memory Usage
+
+Each VM requires:
+
+- **DynamoRIO overhead**: ~100-500 MB
+- **Sample memory**: Variable
+- **Virtual FS/REG**: ~50-200 MB
+
+**Total per VM**: 200 MB - 1 GB (depending on sample)
+
+### Disk I/O
+
+Each VM creates:
+
+- Temporary virtual filesystem
+- JSON report files
+- Cached registry data
+
+**Recommendation**: Use SSD storage for better performance.
+
+## Report Organization
+
+Batch analysis generates separate report directories for each sample:
+
+```
+DrSemu\
+├── xK3mP9nB2qR5vL7\      # VM_1 reports
+│   ├── starter.json
+│   ├── 5124.json
+│   └── 5896.json        # Child process
+├── aB7nQ2mK9rT4vL3\      # VM_2 reports
+│   ├── starter.json
+│   └── 6204.json
+└── zP5kR9nM2qL7vB4\      # VM_3 reports
+    ├── starter.json
+    └── 7832.json
+```
+
+### Mapping Reports to Samples
+
+Use `starter.json` to identify which report belongs to which sample:
+
+```json
+{
+  "image_path": "C:\\samples\\malware1.exe",
+  "starter_pid": 5124,
+  "explorer_pid": 4928,
+  "sha_256": "a1b2c3d4e5f6..."
+}
+```
+
+The `sha_256` field uniquely identifies the sample.
+
+## Batch Analysis Workflow
+
+### Step 1: Organize Samples
+
+```bash
+mkdir C:\analysis\batch1
+copy *.exe C:\analysis\batch1\
+```
+
+### Step 2: Run Batch Analysis
+
+```bash
+LauncherCLI.exe --target "C:\analysis\batch1\" --time_limit 300
+```
+
+### Step 3: Preserve All Reports
+
+While analysis is running, copy reports to a permanent location:
+
+```powershell
+# PowerShell script to preserve reports
+$reportDirs = Get-ChildItem -Path "C:\DrSemu" -Directory | Where-Object { $_.Name -match '^[a-zA-Z0-9]{15}$' }
+foreach ($dir in $reportDirs) {
+    $starterJson = Get-Content "$($dir.FullName)\starter.json" | ConvertFrom-Json
+    $sampleName = Split-Path $starterJson.image_path -Leaf
+    Copy-Item -Recurse $dir.FullName "C:\reports\$sampleName"
+}
+```
+
+### Step 4: Aggregate Results
+
+Collect all `starter.json` files:
+
+```powershell
+Get-ChildItem -Recurse -Filter "starter.json" | ForEach-Object {
+    Get-Content $_.FullName | ConvertFrom-Json
+}
+```
+
+## Filtering and Selection
+
+### Analyze Only Specific Files
+
+Dr.Semu automatically filters for `.exe` files. To analyze a subset:
+
+```bash
+# Move samples to a temporary directory
+mkdir C:\temp_analysis
+copy malware1.exe C:\temp_analysis\
+copy malware3.exe C:\temp_analysis\
+
+LauncherCLI.exe --target "C:\temp_analysis\"
+```
+
+### Exclude Files
+
+Since there's no built-in exclusion, manually organize samples:
+
+```bash
+mkdir C:\samples\to_analyze
+mkdir C:\samples\skip
+
+move suspicious1.exe C:\samples\to_analyze\
+move known_clean.exe C:\samples\skip\
+
+LauncherCLI.exe --target "C:\samples\to_analyze\"
+```
+
+## Monitoring Batch Progress
+
+### Real-Time Monitoring
+
+Watch for completion messages:
+
+```
+[VM_1] Scanning...
+Verdict: MALICIOUS
+[VM_2] Scanning...
+Verdict: BENIGN
+[VM_3] Scanning...
+Verdict: MALICIOUS
+```
+
+### Modal Dialogs
+
+Each completed VM shows a modal:
+
+```
+┌─────────────────────────────┐
+│ LauncherCLI for Dr.Semu     │
+├─────────────────────────────┤
+│ EOF                         │
+├─────────────────────────────┤
+│           [ OK ]            │
+└─────────────────────────────┘
+```
+
+<Note>
+  You'll see multiple modal dialogs (one per sample). Click OK on each to continue.
+</Note>
+
+## Performance Optimization
+
+### Chunking Large Batches
+
+For 50+ samples, split into chunks:
+
+```bash
+# Analyze in batches of 5
+LauncherCLI.exe --target "C:\batch1\"  # Samples 1-5
+LauncherCLI.exe --target "C:\batch2\"  # Samples 6-10
+LauncherCLI.exe --target "C:\batch3\"  # Samples 11-15
+```
+
+### Sequential vs Parallel
+
+Dr.Semu always runs samples in parallel. For sequential analysis:
+
+```bash
+# Analyze one at a time
+for %%f in (C:\samples\*.exe) do (
+    LauncherCLI.exe --target "%%f"
+)
+```
+
+### Timeout Strategy
+
+Set conservative time limits to prevent long-running samples from blocking others:
+
+```bash
+LauncherCLI.exe --target "C:\samples\" --time_limit 180
+```
+
+## Common Issues
+
+### Resource Exhaustion
+
+**Symptom**: System becomes unresponsive
+
+**Solution**: Reduce concurrent samples by splitting the directory
+
+### Incomplete Reports
+
+**Symptom**: Some VMs don't generate reports
+
+**Solution**: Check console for errors (e.g., "Failed to create a slot")
+
+### Mixed Architectures
+
+**Symptom**: Analysis fails for some 32-bit samples
+
+**Solution**: Dr.Semu auto-detects architecture. Ensure `bin32/` and `bin64/` directories exist.
+
+## Best Practices
+
+<Steps>
+  <Step title="Organize by Malware Family">
+    Group similar samples in directories:
+    ```
+    C:\analysis\
+    ├── ransomware\      # All ransomware samples
+    ├── droppers\        # All droppers
+    └── stealers\        # All info stealers
+    ```
+  </Step>
+  
+  <Step title="Use Consistent Time Limits">
+    Set time limits based on sample type:
+    ```bash
+    # Fast droppers
+    LauncherCLI.exe --target "C:\droppers\" --time_limit 120
+    
+    # Complex ransomware
+    LauncherCLI.exe --target "C:\ransomware\" --time_limit 600
+    ```
+  </Step>
+  
+  <Step title="Automate Report Preservation">
+    Create scripts to copy reports immediately:
+    ```powershell
+    # monitor_reports.ps1
+    while ($true) {
+        # Copy new report directories
+        Start-Sleep -Seconds 10
+    }
+    ```
+  </Step>
+  
+  <Step title="Log Console Output">
+    Redirect output to a log file:
+    ```bash
+    LauncherCLI.exe --target "C:\samples\" > analysis.log 2>&1
+    ```
+  </Step>
+</Steps>
+
+## Example: Analyzing a Malware Collection
+
+Complete workflow for analyzing 20 ransomware samples:
+
+```bash
+# 1. Organize samples
+mkdir C:\ransomware_analysis
+copy *.exe C:\ransomware_analysis\
+
+# 2. Run batch analysis with extended timeout
+LauncherCLI.exe --target "C:\ransomware_analysis\" --time_limit 600 > analysis.log
+
+# 3. Wait for all VMs to complete (watch for EOF modals)
+
+# 4. Preserve reports
+robocopy "C:\DrSemu" "C:\reports\ransomware_batch" /E /XF *.exe
+
+# 5. Aggregate results
+python aggregate_reports.py C:\reports\ransomware_batch
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Understanding Reports" icon="chart-simple" href="/usage/reports">
+    Learn how to interpret JSON analysis reports
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/usage/cli-reference">
+    View all command-line options
+  </Card>
+</CardGroup>

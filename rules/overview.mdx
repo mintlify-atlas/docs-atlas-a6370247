@@ -1,0 +1,186 @@
+---
+title: Detection Rules Overview
+description: Learn how to create custom detection rules for Dr.Semu using Lua or Python
+---
+
+Dr.Semu uses a flexible rule-based detection system that allows you to write custom detection logic in either **Lua** or **Python**. Detection rules analyze both static and dynamic analysis results to identify malicious behavior.
+
+## How Detection Rules Work
+
+Detection rules execute after Dr.Semu completes its analysis of a sample. Each rule:
+
+1. Receives a `report_directory` path containing JSON analysis results
+2. Analyzes static information (PE headers, imports, sections, etc.)
+3. Analyzes dynamic behavior (API calls, registry operations, file operations, etc.)
+4. Returns a detection verdict string or "CLEAN"
+
+<Info>
+Rules run in a sandboxed environment and have access to utility functions for parsing analysis data.
+</Info>
+
+## Choosing Lua vs Python
+
+### Lua Rules
+
+**Best for:**
+- Fast execution and low memory overhead
+- Simple pattern matching and string operations
+- Rules that need to be frequently updated
+
+**Pros:**
+- Faster execution time
+- Built-in JSON parsing with utilities
+- Simpler syntax for common detection patterns
+
+### Python Rules
+
+**Best for:**
+- Complex data analysis
+- Rules requiring external libraries
+- Advanced pattern matching with regex
+
+**Pros:**
+- Full Python standard library access
+- More familiar to security researchers
+- Better for complex logic and data structures
+
+<Warning>
+Python rules must import required modules in `py_imports.config`
+</Warning>
+
+## Rule Directory Structure
+
+Detection rules are stored in the `run_detections/dr_rules_files/` directory:
+
+```
+dr_rules_files/
+├── utils.lua              # Lua utility functions
+├── dr_semu_utils.py       # Python utility functions
+├── sample_rule.lua        # Example Lua rule template
+├── wannacry_url.lua       # WannaCry detection rule
+├── dr_semu_eicar.py       # EICAR test detection
+└── py_imports.config      # Python module whitelist
+```
+
+## Analysis Data Structure
+
+Each analyzed sample produces JSON files in the report directory:
+
+- **starter.json** - Initial process information (image path, PID, SHA-256)
+- **{pid}.json** - Dynamic behavior logs for each process
+- **{sha256}.json** - Static analysis results (PE info, imports, sections)
+
+### starter.json Format
+
+```json
+{
+  "image_path": "C:\\sample.exe",
+  "starter_pid": 1234,
+  "sha_256": "abc123..."
+}
+```
+
+### Dynamic Behavior Format
+
+Dynamic JSON files contain arrays of API calls with before/after states:
+
+```json
+[
+  {
+    "NtCreateKey": {
+      "success": true,
+      "before": {
+        "key_path": "HKEY_LOCAL_MACHINE\\..."
+      },
+      "after": {
+        "handle": 1234
+      }
+    }
+  }
+]
+```
+
+### Static Analysis Format
+
+Static JSON files contain PE file analysis:
+
+```json
+{
+  "generic": {
+    "is_x86": true,
+    "is_dll": false
+  },
+  "imports": [...],
+  "sections": [...]
+}
+```
+
+## Quick Start Example
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    utils = require "utils"
+    
+    function check(report_directory)
+        local status = "CLEAN"
+        
+        local first_dynamic = utils.get_first_process_json(report_directory)
+        
+        if first_dynamic ~= nil then
+            for index, win_func in pairs(first_dynamic) do
+                if win_func.NtCreateKey then
+                    if win_func.NtCreateKey.before.key_path:find("malicious_key") then
+                        return "Malware.Detected"
+                    end
+                end
+            end
+        end
+        
+        return status
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    import dr_semu_utils
+    
+    def check(report_directory):
+        verdict = b"CLEAN"
+        
+        image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+        dynamic_info = dr_semu_utils.get_json_from_file(
+            report_directory + b"\\" + str(pid).encode() + b".json"
+        )
+        
+        for win_func in dynamic_info:
+            if "NtCreateKey" in win_func:
+                key_path = win_func["NtCreateKey"]["before"]["key_path"]
+                if "malicious_key" in key_path.lower():
+                    return b"Malware.Detected"
+        
+        return verdict
+    ```
+  </Tab>
+</Tabs>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Lua Rules" icon="code" href="/rules/lua-rules">
+    Learn how to write Lua detection rules
+  </Card>
+  
+  <Card title="Python Rules" icon="python" href="/rules/python-rules">
+    Learn how to write Python detection rules
+  </Card>
+  
+  <Card title="Rule Examples" icon="file-code" href="/rules/rule-examples">
+    See real-world detection rule examples
+  </Card>
+  
+  <Card title="Best Practices" icon="lightbulb" href="/rules/best-practices">
+    Learn rule development best practices
+  </Card>
+</CardGroup>

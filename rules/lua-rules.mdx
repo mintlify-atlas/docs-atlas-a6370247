@@ -1,0 +1,353 @@
+---
+title: Writing Lua Detection Rules
+description: Create high-performance detection rules using Lua
+---
+
+Lua rules provide fast, efficient detection logic with minimal overhead. Dr.Semu includes a comprehensive utility library to simplify working with analysis data.
+
+## Rule Structure
+
+Every Lua rule must follow this structure:
+
+```lua
+utils = require "utils"
+
+function check(report_directory)
+    local status = "CLEAN"
+    
+    -- Your detection logic here
+    
+    return status
+end
+```
+
+<Info>
+The `check()` function is the entry point. It receives the report directory path and must return a detection verdict string.
+</Info>
+
+## Utils Library API
+
+The `utils.lua` library provides helper functions for accessing analysis data.
+
+### get_first_process_json()
+
+Retrieves the dynamic behavior JSON for the initial process.
+
+```lua
+local first_dynamic = utils.get_first_process_json(report_directory)
+```
+
+**Returns:** Table containing API call logs, or `nil` if not available
+
+**Source:** `/run_detections/dr_rules_files/utils.lua:27-46`
+
+**Implementation:**
+```lua
+function utils.get_first_process_json(report_directory)
+    local starter_json = report_directory .. "\\" .. "starter.json"
+    local decoded_starer_json = utils.get_json_from_path(starter_json)
+    if decoded_starer_json.empty then
+        return nil
+    end
+    local starter_path = decoded_starer_json.image_path
+    local starter_pid = decoded_starer_json.starter_pid
+    if starter_path == nil or starter_pid == nil then
+        return nil
+    end
+
+    -- starter process
+    local first_decoded_dynamic = utils.get_json_pid(report_directory, starter_pid)
+    if first_decoded_dynamic.empty then
+        return nil
+    end
+
+    return first_decoded_dynamic
+end
+```
+
+### get_first_static()
+
+Retrieves the static analysis JSON for the initial sample.
+
+```lua
+local first_static = utils.get_first_static(report_directory)
+```
+
+**Returns:** Table containing static analysis data (PE info, imports, sections), or `nil` if not available
+
+**Source:** `/run_detections/dr_rules_files/utils.lua:48-57`
+
+**Implementation:**
+```lua
+function utils.get_first_static(report_directory)
+    local starter_json = report_directory .. "\\" .. "starter.json"
+    local decoded_starer_json = utils.get_json_from_path(starter_json)
+    if decoded_starer_json.empty then
+        return nil
+    end
+    local sha_256 = decoded_starer_json.sha_256
+    local static_decoded = utils.get_json_from_path(report_directory .. "\\" .. sha_256 .. ".json")
+    return static_decoded
+end
+```
+
+### get_json_pid()
+
+Retrieves dynamic behavior JSON for a specific process ID.
+
+```lua
+local decoded_json = utils.get_json_pid(report_directory, target_PID)
+```
+
+**Parameters:**
+- `report_directory` - Path to the report directory
+- `pid` - Process ID to retrieve
+
+**Returns:** Table containing API call logs for the specified PID
+
+**Source:** `/run_detections/dr_rules_files/utils.lua:21-25`
+
+**Implementation:**
+```lua
+function utils.get_json_pid(report_directory, pid)
+    local json_file = report_directory .. "\\" .. pid .. ".json"
+    local decoded = utils.get_json_from_path(json_file)
+    return decoded
+end
+```
+
+<Note>
+Always check for `nil` or `.empty` before accessing data to prevent errors.
+</Note>
+
+## Accessing Static Analysis Data
+
+Static analysis provides PE file metadata:
+
+```lua
+local first_static = utils.get_first_static(report_directory)
+
+if first_static ~= nil then
+    local is_x86 = first_static.generic.is_x86
+    local is_dll = first_static.generic.is_dll
+    
+    -- Access other static properties
+end
+```
+
+**Available Static Fields:**
+- `generic.is_x86` - True if 32-bit executable
+- `generic.is_dll` - True if DLL file
+- `imports` - Imported functions table
+- `sections` - PE sections table
+
+## Analyzing Dynamic Behavior
+
+Dynamic behavior is stored as an array of API calls:
+
+```lua
+local first_dynamic = utils.get_first_process_json(report_directory)
+
+if first_dynamic ~= nil then
+    for index, win_func in pairs(first_dynamic) do
+        -- Check for specific API calls
+        if win_func.NtCreateKey then
+            -- Access call details
+        end
+    end
+end
+```
+
+### Checking API Call Success
+
+```lua
+if win_func.NtCreateKey and win_func.NtCreateKey.success == true then
+    -- API call succeeded
+    local key_path = win_func.NtCreateKey.before.key_path
+end
+```
+
+### Accessing Before/After States
+
+API calls have `before` and `after` states:
+
+```lua
+if win_func.NtCreateUserProcess then
+    -- Before state: input parameters
+    local image_path = win_func.NtCreateUserProcess.before.image_path
+    
+    -- After state: output values
+    if win_func.NtCreateUserProcess.success == true then
+        local target_PID = win_func.NtCreateUserProcess.after.proc_id
+    end
+end
+```
+
+## Analyzing Child Processes
+
+Detect process creation and analyze child process behavior:
+
+```lua
+if win_func.NtCreateUserProcess then
+    if win_func.NtCreateUserProcess.success == true then
+        local target_PID = win_func.NtCreateUserProcess.after.proc_id
+        local decoded_json = utils.get_json_pid(report_directory, target_PID)
+        
+        if not decoded_json.empty then
+            -- enumerate a json of the child process
+            for index, child_func in pairs(decoded_json) do
+                -- Analyze child process API calls
+            end
+        end
+    end
+end
+```
+
+**Source:** `/run_detections/dr_rules_files/sample_rule.lua:28-36`
+
+## String Pattern Matching
+
+Lua's `string:find()` is useful for pattern detection:
+
+```lua
+if win_func.NtCreateUserProcess.before.image_path ~= nil then
+    if win_func.NtCreateUserProcess.before.image_path:find("whoami") then
+        return "WHOAMI!EXE"
+    end
+end
+```
+
+**Source:** `/run_detections/dr_rules_files/sample_rule.lua:39-43`
+
+<Tip>
+Use `string:lower()` for case-insensitive matching:
+```lua
+local url = win_func.InternetOpenUrlA.before.url:lower()
+```
+</Tip>
+
+## Return Values
+
+Rules return detection verdicts:
+
+```lua
+function check(report_directory)
+    local status = "CLEAN"
+    
+    -- Detection logic
+    if suspicious_behavior then
+        return "Win32.Malware.DR"  -- Detection verdict
+    end
+    
+    return status  -- No detection
+end
+```
+
+**Verdict Format:**
+- Return `"CLEAN"` for benign samples
+- Return a detection string for malicious samples (e.g., `"Win32.WannaCry.DR"`)
+
+## Common API Calls
+
+Frequently monitored Windows API calls:
+
+### Process Operations
+- `NtCreateUserProcess` - Process creation
+- `NtTerminateProcess` - Process termination
+
+### Registry Operations
+- `NtCreateKey` - Registry key creation
+- `NtSetValueKey` - Registry value modification
+- `NtDeleteKey` - Registry key deletion
+
+### File Operations
+- `NtCreateFile` - File creation/opening
+- `NtWriteFile` - File writing
+- `NtDeleteFile` - File deletion
+
+### Network Operations
+- `InternetOpenUrlA` - HTTP/HTTPS connections
+- `InternetConnectA` - Network connections
+
+## Complete Example
+
+Here's the WannaCry detection rule from the source:
+
+```lua
+utils = require "utils"
+
+function check(report_directory)
+    local status = "CLEAN"
+
+    local first_dynamic = utils.get_first_process_json(report_directory)
+    local first_static = utils.get_first_static(report_directory)
+
+    -- static information
+    local is_x86 = false
+    if first_static ~= nil then
+        is_x86 = first_static.generic.is_x86
+    end
+
+    -- dynamic information
+    if first_dynamic ~= nil then
+        for index, win_func in pairs(first_dynamic) do
+            if win_func.InternetOpenUrlA and win_func.InternetOpenUrlA.before.url then
+                local url = win_func.InternetOpenUrlA.before.url:lower()
+                if url == "http://www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com" then
+                    return "Win32.WannaCry.DR"
+                end
+            end
+        end
+    end
+    
+    return status
+end
+```
+
+**Source:** `/run_detections/dr_rules_files/wannacry_url.lua`
+
+This rule detects WannaCry by identifying its kill switch URL.
+
+## Performance Tips
+
+<AccordionGroup>
+  <Accordion title="Check nil before accessing nested fields">
+    Always validate data exists before accessing:
+    ```lua
+    if first_static ~= nil then
+        if first_static.generic ~= nil then
+            local is_x86 = first_static.generic.is_x86
+        end
+    end
+    ```
+  </Accordion>
+  
+  <Accordion title="Use local variables">
+    Local variables are faster than globals:
+    ```lua
+    local status = "CLEAN"  -- Good
+    status = "CLEAN"        -- Slower (global)
+    ```
+  </Accordion>
+  
+  <Accordion title="Early return on detection">
+    Return immediately when malware is detected:
+    ```lua
+    if malicious_behavior then
+        return "Malware.Detected"  -- Stop processing
+    end
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Rule Examples" icon="file-code" href="/rules/rule-examples">
+    See more real-world rule examples
+  </Card>
+  
+  <Card title="Best Practices" icon="lightbulb" href="/rules/best-practices">
+    Learn rule development best practices
+  </Card>
+</CardGroup>

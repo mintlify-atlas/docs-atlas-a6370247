@@ -1,0 +1,157 @@
+---
+title: System Information Calls
+description: System information and configuration calls monitored by Dr.Semu
+---
+
+Dr.Semu monitors system information queries and configuration changes to track system enumeration and manipulation attempts.
+
+## System Information
+
+### NtQuerySystemInformation
+
+Retrieves system information.
+
+<ParamField path="SystemInformationClass" type="SYSTEM_INFORMATION_CLASS">
+  Type of system information to retrieve
+</ParamField>
+
+<ParamField path="SystemInformation" type="PVOID" optional>
+  Buffer to receive the information
+</ParamField>
+
+<ParamField path="SystemInformationLength" type="ULONG">
+  Size of the buffer
+</ParamField>
+
+<ParamField path="ReturnLength" type="PULONG" optional>
+  Receives the size of data returned
+</ParamField>
+
+**Logged Information:**
+- Information class being queried
+- Operation success status
+
+**Supported Information Classes:**
+- **SystemProcessInformation**: Retrieves information about running processes
+  - Dr.Semu-related processes (drrun.exe, explorer32.exe, explorer64.exe) are hidden from results
+  - Process list is sanitized to prevent detection
+
+**Special Handling:**
+When querying SystemProcessInformation, the returned process list is modified to hide Dr.Semu infrastructure processes. This prevents analyzed binaries from detecting the analysis environment.
+
+---
+
+## System Configuration
+
+### NtUserSystemParametersInfo
+
+Retrieves or sets system-wide parameters.
+
+<ParamField path="uiAction" type="UINT">
+  System parameter to query or set
+</ParamField>
+
+<ParamField path="uiParam" type="UINT">
+  Depends on the action being performed
+</ParamField>
+
+<ParamField path="pvParam" type="PVOID">
+  Depends on the action being performed
+</ParamField>
+
+<ParamField path="fWinIni" type="UINT">
+  Whether to update the user profile
+</ParamField>
+
+**Monitored Actions:**
+
+#### SPI_SETDESKWALLPAPER
+Attempt to change desktop wallpaper.
+
+**Logged Information:**
+- Action type
+- Wallpaper file path
+- Operation success status (always fails)
+
+**Access Control:**
+Wallpaper changes are denied with STATUS_INVALID_PARAMETER to prevent desktop modifications during analysis.
+
+#### SPI_GETDESKWALLPAPER
+Retrieve current desktop wallpaper path.
+
+**Note:**
+Get operations are allowed to pass through.
+
+---
+
+## Driver Operations
+
+### NtLoadDriver
+
+Loads a kernel-mode driver.
+
+<ParamField path="DriverServiceName" type="PUNICODE_STRING">
+  Path to the driver's registry key
+</ParamField>
+
+**Expected Format:**
+```
+\Registry\Machine\System\CurrentControlSet\Services\<DriverName>
+```
+
+**Logged Information:**
+- Registry path of the driver service
+- Operation success status (always fails)
+
+**Access Control:**
+Driver loading is denied with STATUS_ACCESS_DENIED to prevent kernel-mode code execution during analysis.
+
+---
+
+## Error Handling
+
+### NtRaiseHardError
+
+Raises a hard error, typically displaying a system error dialog.
+
+<ParamField path="ErrorStatus" type="NTSTATUS">
+  The error code to raise
+</ParamField>
+
+<ParamField path="NumberOfParameters" type="ULONG">
+  Number of parameters in the Parameters array
+</ParamField>
+
+<ParamField path="UnicodeStringParameterMask" type="ULONG">
+  Bitmask indicating which parameters are Unicode strings
+</ParamField>
+
+<ParamField path="Parameters" type="PULONG_PTR">
+  Array of parameters for the error message
+</ParamField>
+
+<ParamField path="ValidResponseOptions" type="ULONG">
+  Valid responses for the error dialog
+</ParamField>
+
+<ParamField path="Response" type="PULONG">
+  Receives the user's response
+</ParamField>
+
+**Note:**
+This call is logged and passed through. Hard errors may be used by malware to crash the system or display fake error messages.
+
+---
+
+## Security Considerations
+
+Several system operations are blocked to maintain analysis environment integrity:
+
+1. **Driver Loading**: Prevented to avoid kernel-mode code execution
+2. **Wallpaper Changes**: Blocked to prevent desktop modifications
+3. **Process Enumeration**: Sanitized to hide Dr.Semu infrastructure
+
+These restrictions ensure:
+- Analysis environment remains stable
+- Malware cannot detect the sandbox
+- System configuration is preserved

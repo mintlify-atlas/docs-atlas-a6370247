@@ -1,0 +1,406 @@
+---
+title: Virtual Filesystem
+description: Deep dive into Dr.Semu's virtual filesystem implementation using Windows ProjFS
+---
+
+Dr.Semu uses Windows Projected File System (ProjFS) to create an isolated virtual filesystem where malware executes without affecting the host system.
+
+## Overview
+
+The virtual filesystem provides:
+
+- **Complete isolation** - File operations are redirected to a virtual root
+- **Transparent access** - Malware sees a normal Windows filesystem
+- **Zero kernel drivers** - Entirely user-mode implementation
+- **On-demand population** - Files are projected only when accessed
+
+## Architecture
+
+### ProjFS Integration
+
+Dr.Semu implements a ProjFS provider in `virtual_FS_REG/` that intercepts filesystem operations:
+
+```cpp
+class fs_provider final : public virtualization_instance
+{
+    // Mandatory callbacks
+    HRESULT StartDirEnum(...);
+    HRESULT GetDirEnum(...);
+    HRESULT EndDirEnum(...);
+    HRESULT GetPlaceholderInfo(...);
+    HRESULT GetFileData(...);
+    
+    // Optional callbacks
+    HRESULT Notify(...);
+    HRESULT QueryFileName(...);
+};
+```
+
+**Location**: `virtual_FS_REG/fs_provider.h` and `virtual_FS_REG/fs_provider.cpp`
+
+### Virtualization Instance
+
+The base class `virtualization_instance` wraps the ProjFS C API:
+
+**File**: `virtual_FS_REG/virtualizationInstance.h`
+
+Key methods:
+- `Start()` - Initializes ProjFS virtualization root
+- `Stop()` - Stops virtualization
+- `WritePlaceholderInfo()` - Creates placeholder files
+- `WriteFileData()` - Hydrates placeholders with content
+
+## How It Works
+
+### 1. Virtualization Root Setup
+
+When Dr.Semu starts, it creates a virtualization root:
+
+```cpp
+HRESULT virtualization_instance::EnsureVirtualizationRoot()
+{
+    // Create directory if doesn't exist
+    CreateDirectory(_rootPath.c_str(), nullptr);
+    
+    // Generate unique instance ID
+    GUID instanceId;
+    CoCreateGuid(&instanceId);
+    
+    // Mark directory as ProjFS virtualization root
+    PrjMarkDirectoryAsPlaceholder(_rootPath.c_str(),
+                                  nullptr,
+                                  nullptr,
+                                  &instanceId);
+}
+```
+
+**Location**: `virtualizationInstance.cpp:166-263`
+
+The root directory (e.g., `C:\temp\dr_semu_0\`) becomes a ProjFS virtualization root where all file operations are intercepted.
+
+### 2. Directory Enumeration
+
+When malware lists directory contents:
+
+**StartDirEnum** - Called when enumeration begins:
+```cpp
+HRESULT fs_provider::StartDirEnum(const PRJ_CALLBACK_DATA* CallbackData,
+                                  const GUID* EnumerationId)
+{
+    // Create session to track this enumeration
+    active_enum_sessions_[*EnumerationId] = 
+        std::make_unique<dir_info>(CallbackData->FilePathName);
+    return S_OK;
+}
+```
+
+**Location**: `fs_provider.cpp:128-139`
+
+**GetDirEnum** - Called to return directory entries:
+```cpp
+HRESULT fs_provider::GetDirEnum(const PRJ_CALLBACK_DATA* CallbackData,
+                                const GUID* EnumerationId,
+                                PCWSTR SearchExpression,
+                                PRJ_DIR_ENTRY_BUFFER_HANDLE DirEntryBufferHandle)
+{
+    // Populate entries from real filesystem
+    populate_dir_info_for_path(CallbackData->FilePathName,
+                               dir_info.get(),
+                               SearchExpression);
+    
+    // Return entries to ProjFS
+    while (dir_info->current_is_valid()) {
+        PrjFillDirEntryBuffer(dir_info->current_file_name(),
+                              &current_basic_info,
+                              DirEntryBufferHandle);
+        dir_info->move_next();
+    }
+}
+```
+
+**Location**: `fs_provider.cpp:187-274`
+
+**EndDirEnum** - Called when enumeration completes:
+```cpp
+HRESULT fs_provider::EndDirEnum(const PRJ_CALLBACK_DATA* CallbackData,
+                                const GUID* EnumerationId)
+{
+    // Clean up enumeration session
+    active_enum_sessions_.erase(*EnumerationId);
+    return S_OK;
+}
+```
+
+**Location**: `fs_provider.cpp:150-156`
+
+### 3. File Metadata Projection
+
+When malware accesses a file for the first time:
+
+```cpp
+HRESULT fs_provider::GetPlaceholderInfo(const PRJ_CALLBACK_DATA* CallbackData)
+{
+    // Get real path from virtual path
+    const auto file_path = get_real_path(CallbackData->FilePathName);
+    
+    // Create placeholder info with file metadata
+    DWORD size;
+    auto placeholder_ptr = create_placeholder_info(file_path, size);
+    
+    // Write placeholder to virtual filesystem
+    this->WritePlaceholderInfo(CallbackData->FilePathName,
+                               placeholder_ptr.get(),
+                               size);
+}
+```
+
+**Location**: `fs_provider.cpp:277-304`
+
+This creates an **empty placeholder** file with correct:
+- File size
+- Timestamps (creation, modified, accessed)
+- File attributes (hidden, system, etc.)
+- Security descriptor
+
+### 4. File Data Hydration
+
+When malware reads file contents:
+
+```cpp
+HRESULT fs_provider::GetFileData(const PRJ_CALLBACK_DATA* CallbackData,
+                                 UINT64 ByteOffset,
+                                 UINT32 Length)
+{
+    // Allocate memory-aligned buffer for non-cached I/O
+    void* write_buffer = PrjAllocateAlignedBuffer(_instanceHandle, Length);
+    
+    // Read from real filesystem
+    read_file_content(CallbackData->FilePathName,
+                      (PBYTE)write_buffer,
+                      Length);
+    
+    // Write to virtual placeholder
+    this->WriteFileData(&CallbackData->DataStreamId,
+                        write_buffer,
+                        ByteOffset,
+                        Length);
+    
+    PrjFreeAlignedBuffer(write_buffer);
+}
+```
+
+**Location**: `fs_provider.cpp:333-399`
+
+This converts the placeholder to a **hydrated placeholder** containing actual file data.
+
+## Path Translation
+
+Dr.Semu translates between virtual and real paths:
+
+```cpp
+std::wstring get_real_path(const std::wstring& relative_file_path)
+{
+    // Get system drive (e.g., "C:")
+    wchar_t* p_value = nullptr;
+    size_t len;
+    _wdupenv_s(&p_value, &len, L"SystemDrive");
+    
+    std::wstring full_file_path{p_value};
+    free(p_value);
+    
+    // Append relative path: "C:" + "\\Windows\\System32\\..."
+    full_file_path += L'\\';
+    full_file_path += relative_file_path;
+    
+    return full_file_path;
+}
+```
+
+**Location**: `fs_provider.cpp:5-21`
+
+### Example
+
+Malware accesses: `C:\dr_semu_0\Windows\System32\kernel32.dll`
+
+Dr.Semu maps to: `C:\Windows\System32\kernel32.dll`
+
+## Isolation Enforcement
+
+The virtual filesystem blocks access to Dr.Semu internals:
+
+```cpp
+const std::wstring vm_path_start_{LR"(\dr_semu_)"};
+
+// In all callbacks:
+const std::wstring target_file_path{CallbackData->FilePathName};
+if (target_file_path.find(vm_path_start_) != std::wstring::npos)
+{
+    return E_ACCESSDENIED;  // Block access to Dr.Semu files
+}
+```
+
+**Location**: `fs_provider.cpp:22, 198-201, 283-286, 343-346`
+
+This prevents malware from:
+- Detecting virtualization artifacts
+- Tampering with Dr.Semu components
+- Breaking out of isolation
+
+## File Notifications
+
+Dr.Semu receives notifications for file operations:
+
+```cpp
+HRESULT fs_provider::Notify(const PRJ_CALLBACK_DATA* CallbackData,
+                            BOOLEAN IsDirectory,
+                            PRJ_NOTIFICATION NotificationType,
+                            PCWSTR DestinationFileName,
+                            PRJ_NOTIFICATION_PARAMETERS* NotificationParameters)
+{
+    // Allow all operations (monitoring only)
+    return HRESULT_FROM_WIN32(STATUS_SUCCESS);
+}
+```
+
+**Location**: `fs_provider.cpp:402-408`
+
+Notification types include:
+- `PRJ_NOTIFICATION_FILE_OPENED` - File opened
+- `PRJ_NOTIFICATION_PRE_DELETE` - File about to be deleted
+- `PRJ_NOTIFICATION_PRE_RENAME` - File about to be renamed
+- `PRJ_NOTIFICATION_FILE_OVERWRITTEN` - File overwritten
+
+Dr.Semu allows all operations but could block specific ones by returning an error code.
+
+## Security Descriptor Handling
+
+Dr.Semu applies security descriptors to projected files:
+
+```cpp
+struct fs_security_descriptor
+{
+    DWORD len{};
+    std::shared_ptr<byte> ptr_sd{};
+};
+
+inline fs_security_descriptor fs_descriptor{};
+
+std::shared_ptr<PRJ_PLACEHOLDER_INFO> create_placeholder_info(
+    const std::wstring& file_path, DWORD& size)
+{
+    // Include security descriptor in placeholder
+    size = FIELD_OFFSET(PRJ_PLACEHOLDER_INFO, VariableData[fs_descriptor.len]);
+    auto placeholder_info = allocate(size);
+    
+    // Copy security descriptor
+    memcpy_s(placeholder_info->VariableData,
+             fs_descriptor.len,
+             fs_descriptor.ptr_sd.get(),
+             fs_descriptor.len);
+    
+    placeholder_info->SecurityInformation.SecurityBufferSize = fs_descriptor.len;
+    placeholder_info->SecurityInformation.OffsetToSecurityDescriptor =
+        FIELD_OFFSET(PRJ_PLACEHOLDER_INFO, VariableData);
+}
+```
+
+**Location**: `fs_provider.h:5-12`, `fs_provider.cpp:57-87`
+
+## Device Path Translation
+
+Dr.Semu handles device path formats:
+
+```cpp
+std::wstring get_virtual_root_device_form()
+{
+    TCHAR device_name[MAX_PATH]{};
+    
+    // Get drive letter (e.g., "C:")
+    const std::wstring virtual_drive_name(
+        virtual_filesystem_path, 0, 2);
+    
+    // Query device path (e.g., "\\Device\\HarddiskVolume2")
+    QueryDosDevice(virtual_drive_name.c_str(), device_name, MAX_PATH);
+    
+    const std::wstring device_path(device_name, wcslen(device_name));
+    
+    // Combine: "\\Device\\HarddiskVolume2\\temp\\dr_semu_0"
+    return device_path + std::wstring{virtual_filesystem_path, 2};
+}
+```
+
+**Location**: `DrSemu/DrSemu.cpp:42-57`
+
+This supports both formats:
+- DOS path: `C:\dr_semu_0\file.txt`
+- Device path: `\Device\HarddiskVolume2\dr_semu_0\file.txt`
+
+## Performance Considerations
+
+### On-Demand Projection
+
+ProjFS only projects files when accessed:
+- Initial directory listing is fast (metadata only)
+- File data is read only when needed
+- Reduces memory and I/O overhead
+
+### Caching
+
+Windows file system cache applies:
+- Repeated reads are served from cache
+- Write-through for modifications
+- Cache coherency managed by ProjFS
+
+### Memory Alignment
+
+For non-cached I/O compatibility:
+
+```cpp
+// Allocate aligned buffer
+const auto write_buffer = PrjAllocateAlignedBuffer(_instanceHandle, Length);
+
+// ... use buffer ...
+
+// Free aligned buffer
+PrjFreeAlignedBuffer(write_buffer);
+```
+
+**Location**: `fs_provider.cpp:362-396`
+
+## Limitations
+
+### Read-Only Projection
+
+Dr.Semu projects the real filesystem as read-only in concept. New files created by malware exist only in the virtual root and don't affect the real system.
+
+### Windows Version Requirement
+
+ProjFS requires:
+- Minimum: Windows 10 version 1809 (October 2018 Update)
+- Or: Windows Server 2019
+
+Earlier versions are not supported.
+
+### Filesystem Features
+
+Some advanced features may have limitations:
+- Alternate data streams (supported via `StreamsInformation`)
+- Extended attributes (supported via `EaInformation`)
+- Hard links (see notification handling)
+
+## Source Files
+
+Virtual filesystem implementation:
+
+- `virtual_FS_REG/virtualizationInstance.h` - Base ProjFS wrapper class
+- `virtual_FS_REG/virtualizationInstance.cpp` - ProjFS API implementation
+- `virtual_FS_REG/fs_provider.h` - Filesystem provider interface
+- `virtual_FS_REG/fs_provider.cpp` - Filesystem callback implementations
+- `virtual_FS_REG/dir_info.h` - Directory enumeration helper
+- `virtual_FS_REG/shared_config.h` - Build configuration
+
+## Related Components
+
+The virtual filesystem works with:
+- [Registry Redirection](/advanced/registry-redirection) - Virtual registry implementation
+- [DynamoRIO Integration](/advanced/dynamorio-integration) - System call interception

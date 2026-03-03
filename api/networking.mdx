@@ -1,0 +1,186 @@
+---
+title: Network System Calls
+description: Network-related API calls monitored by Dr.Semu
+---
+
+Dr.Semu monitors network operations to track network activity performed by the analyzed binary. Network operations can be optionally disabled during analysis.
+
+## Socket Operations
+
+### WSAStartup
+
+Initializes the Windows Sockets API.
+
+<ParamField path="wVersionRequired" type="WORD">
+  Highest version of Windows Sockets specification that the caller can use
+</ParamField>
+
+<ParamField path="lpWSAData" type="LPWSADATA">
+  Pointer to WSADATA structure to receive details of the Windows Sockets implementation
+</ParamField>
+
+**Access Control:**
+When internet is disabled in configuration, this call fails with WSASYSNOTREADY.
+
+---
+
+### gethostbyname
+
+Retrieves host information corresponding to a hostname.
+
+<ParamField path="name" type="const char*">
+  Pointer to null-terminated hostname
+</ParamField>
+
+**Logged Information:**
+- Hostname being resolved
+
+---
+
+## URL Operations
+
+### URLDownloadToFileW
+
+Downloads a file from the internet to a local file.
+
+<ParamField path="pCaller" type="LPUNKNOWN" optional>
+  Pointer to controlling IUnknown interface
+</ParamField>
+
+<ParamField path="szURL" type="LPCWSTR">
+  URL to download from (cannot be NULL)
+</ParamField>
+
+<ParamField path="szFileName" type="LPCWSTR" optional>
+  Path to save the downloaded file
+</ParamField>
+
+<ParamField path="dwReserved" type="DWORD">
+  Reserved, must be 0
+</ParamField>
+
+<ParamField path="lpfnCB" type="LPBINDSTATUSCALLBACK" optional>
+  Pointer to callback for progress notifications
+</ParamField>
+
+**Logged Information:**
+- URL being accessed
+- Destination file path
+
+**Return Values:**
+- INET_E_DOWNLOAD_FAILURE if URL is NULL or invalid
+
+---
+
+### URLDownloadToCacheFileW
+
+Downloads a file from the internet to the cache.
+
+<ParamField path="pCaller" type="LPUNKNOWN" optional>
+  Pointer to controlling IUnknown interface
+</ParamField>
+
+<ParamField path="szURL" type="LPCWSTR">
+  URL to download from (cannot be NULL)
+</ParamField>
+
+<ParamField path="szFileName" type="LPWSTR">
+  Buffer to receive the path to cached file
+</ParamField>
+
+<ParamField path="cchFileName" type="DWORD">
+  Size of the file name buffer in characters
+</ParamField>
+
+<ParamField path="dwReserved" type="DWORD">
+  Reserved, must be 0
+</ParamField>
+
+<ParamField path="lpfnCB" type="LPBINDSTATUSCALLBACK" optional>
+  Pointer to callback for progress notifications
+</ParamField>
+
+**Logged Information:**
+- URL being accessed
+
+**Return Values:**
+- INET_E_DOWNLOAD_FAILURE if URL is NULL or invalid
+
+---
+
+## Internet Operations
+
+### InternetOpenUrlW
+
+Opens a resource specified by a URL (Unicode version).
+
+<ParamField path="hInternet" type="HINTERNET">
+  Handle returned by InternetOpen
+</ParamField>
+
+<ParamField path="lpszUrl" type="LPCWSTR">
+  URL to open
+</ParamField>
+
+<ParamField path="lpszHeaders" type="LPCWSTR" optional>
+  Additional headers to send
+</ParamField>
+
+<ParamField path="dwHeadersLength" type="DWORD">
+  Length of additional headers
+</ParamField>
+
+<ParamField path="dwFlags" type="DWORD">
+  Flags controlling the operation
+</ParamField>
+
+<ParamField path="dwContext" type="DWORD_PTR" optional>
+  Application-defined context value
+</ParamField>
+
+**Logged Information:**
+- URL being accessed
+
+---
+
+### InternetOpenUrlA
+
+Opens a resource specified by a URL (ANSI version).
+
+<ParamField path="hInternet" type="HINTERNET">
+  Handle returned by InternetOpen
+</ParamField>
+
+<ParamField path="lpszUrl" type="LPCSTR">
+  URL to open
+</ParamField>
+
+<ParamField path="lpszHeaders" type="LPCSTR" optional>
+  Additional headers to send
+</ParamField>
+
+<ParamField path="dwHeadersLength" type="DWORD">
+  Length of additional headers
+</ParamField>
+
+<ParamField path="dwFlags" type="DWORD">
+  Flags controlling the operation
+</ParamField>
+
+<ParamField path="dwContext" type="DWORD_PTR" optional>
+  Application-defined context value
+</ParamField>
+
+**Logged Information:**
+- URL being accessed
+
+---
+
+## Configuration
+
+Network operations can be disabled by setting the `disable_internet` configuration flag. When enabled:
+
+- WSAStartup returns WSASYSNOTREADY
+- Other network operations are still monitored but may be blocked
+
+This allows analysis of malware behavior when network connectivity is unavailable.

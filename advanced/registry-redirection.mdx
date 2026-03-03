@@ -1,0 +1,494 @@
+---
+title: Registry Redirection
+description: Technical details of Dr.Semu's registry virtualization using hive cloning
+---
+
+Dr.Semu implements registry isolation by cloning Windows registry hives and redirecting all registry access to isolated copies.
+
+## Overview
+
+Unlike the filesystem which uses ProjFS, registry virtualization uses a different approach:
+
+- **Hive cloning** - Copy entire registry hives to disk
+- **Registry loading** - Load clones as separate hives
+- **Path redirection** - Redirect all registry access to cloned hives
+- **User-mode only** - No kernel drivers required
+
+## Architecture
+
+### Virtual Registry Class
+
+The core implementation is in `virtual_registry` class:
+
+```cpp
+namespace registry
+{
+    class virtual_registry
+    {
+        std::wstring vm_prefix_{};  // Unique prefix (e.g., "dr_semu_0")
+        const std::wstring virtual_reg_data_dir_ = L"virtual_reg";
+        
+    public:
+        bool is_loaded = false;
+        std::wstring virtual_reg_root{};
+        
+        explicit virtual_registry(const std::wstring& vm_prefix);
+        ~virtual_registry();
+        
+        bool save_root_key(std::wstring_view target_key_name) const;
+    private:
+        bool unload_virtual_key(HKEY root_key) const;
+    };
+}
+```
+
+**Location**: `virtual_FS_REG/virtual_reg.h`
+
+## How It Works
+
+### 1. Hive Enumeration
+
+First, enumerate all subkeys under the root hives:
+
+```cpp
+std::vector<std::wstring> enumerate_key_names(const HKEY root_key)
+{
+    std::vector<std::wstring> key_names{};
+    DWORD number_of_keys = 0;
+    
+    // Query number of subkeys
+    RegQueryInfoKey(root_key, nullptr, nullptr, nullptr,
+                    &number_of_keys, nullptr, nullptr,
+                    nullptr, nullptr, nullptr, nullptr, nullptr);
+    
+    // Enumerate each subkey
+    for (DWORD i = 0; i < number_of_keys; i++) {
+        DWORD name_size = MAX_PATH;
+        RegEnumKeyEx(root_key, i, key_name.get(), &name_size,
+                     nullptr, nullptr, nullptr, nullptr);
+        if (ret_code == ERROR_SUCCESS) {
+            key_names.emplace_back(key_name.get());
+        }
+    }
+    
+    return key_names;
+}
+```
+
+**Location**: `virtual_reg.cpp:11-51`
+
+### 2. Hive Saving
+
+Save each registry hive to disk:
+
+```cpp
+bool virtual_registry::save_root_key(std::wstring_view target_key_name) const
+{
+    // Determine root key (HKLM or HKEY_USERS)
+    const auto key_handle = target_key_name == L"HKLM" 
+        ? HKEY_LOCAL_MACHINE 
+        : HKEY_USERS;
+    
+    // Create directory for hives
+    const auto target_directory = virtual_reg_data_dir_ + L"\\" 
+        + target_key_name.data();
+    
+    if (!fs::exists(target_directory) || fs::is_empty(target_directory)) {
+        fs::create_directory(target_directory);
+        
+        // Get all subkey names
+        const auto sub_key_names = enumerate_key_names(key_handle);
+        
+        // Save each subkey to a file
+        for (const auto& key_name : sub_key_names) {
+            // Skip Dr.Semu's own keys
+            if (key_name.starts_with(L"dr_semu")) {
+                continue;
+            }
+            
+            // Use reg.exe to save hive
+            const auto reg_command = std::wstring{L"reg save "} 
+                + target_key_name.data() + L"\\" + key_name 
+                + L" " + target_directory + L"\\" + key_name;
+            
+            const auto is_success = create_reg_process(reg_command);
+            if (!is_success) {
+                return false;
+            }
+        }
+    }
+    
+    return true;
+}
+```
+
+**Location**: `virtual_reg.cpp:53-89`
+
+This uses the Windows `reg save` command to save registry hives. For example:
+```
+reg save HKLM\SOFTWARE virtual_reg\HKLM\SOFTWARE
+```
+
+### 3. Hive Loading
+
+Load the cloned hives under a unique prefix:
+
+```cpp
+virtual_registry::virtual_registry(const std::wstring& vm_prefix)
+{
+    this->vm_prefix_ = vm_prefix;  // e.g., "dr_semu_0"
+    
+    // Clean up any previous virtual registry
+    unload_virtual_key(HKEY_LOCAL_MACHINE);
+    unload_virtual_key(HKEY_USERS);
+    
+    // Save current registry state
+    save_root_key(L"HKLM");
+    save_root_key(L"HKEY_USERS");
+    
+    // Copy hives to VM-specific directory
+    target_directory = virtual_reg_data_dir_ + L"\\HKLM_" + vm_prefix_;
+    fs::copy(virtual_reg_data_dir_ + L"\\HKLM", target_directory);
+    
+    // Load each hive under the VM prefix
+    for (auto& path : fs::directory_iterator(target_directory)) {
+        const auto key_name = path.path().filename().wstring();
+        
+        // Load as: HKLM\dr_semu_0!SOFTWARE
+        const auto reg_command = L"reg load HKLM\\" 
+            + vm_prefix_ + L"!" + key_name 
+            + L" " + target_directory + L"\\" + key_name;
+        
+        create_reg_process(reg_command);
+    }
+    
+    // Repeat for HKEY_USERS
+    target_directory = virtual_reg_data_dir_ + L"\\HKEY_USERS_" + vm_prefix_;
+    fs::copy(virtual_reg_data_dir_ + L"\\HKEY_USERS", target_directory);
+    
+    for (auto& path : fs::directory_iterator(target_directory)) {
+        const auto key_name = path.path().filename().wstring();
+        const auto reg_command = L"reg load HKEY_USERS\\" 
+            + vm_prefix_ + L"!" + key_name 
+            + L" " + target_directory + L"\\" + key_name;
+        
+        create_reg_process(reg_command);
+    }
+    
+    is_loaded = true;
+    virtual_reg_root = std::wstring{LR"(HKEY_LOCAL_MACHINE\)"} + vm_prefix_;
+}
+```
+
+**Location**: `virtual_reg.cpp:92-153`
+
+### Registry Hierarchy
+
+After loading, the registry structure looks like:
+
+```
+HKEY_LOCAL_MACHINE\
+  dr_semu_0!SOFTWARE
+  dr_semu_0!SYSTEM
+  dr_semu_0!HARDWARE
+  dr_semu_0!SAM
+  dr_semu_0!SECURITY
+  ...
+
+HKEY_USERS\
+  dr_semu_0!.DEFAULT
+  dr_semu_0!S-1-5-18
+  dr_semu_0!S-1-5-19
+  ...
+```
+
+The `!` character separates the VM prefix from the hive name.
+
+### 4. Registry Access Redirection
+
+When malware accesses the registry, DynamoRIO intercepts system calls and redirects paths.
+
+For example, accessing:
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows
+```
+
+Gets redirected to:
+```
+HKEY_LOCAL_MACHINE\dr_semu_0!SOFTWARE\Microsoft\Windows
+```
+
+This happens in the registry handlers (see DynamoRIO integration).
+
+### 5. Cleanup on Exit
+
+When analysis completes, unload and remove the virtual registry:
+
+```cpp
+virtual_registry::~virtual_registry()
+{
+    if (is_loaded) {
+        // Unload all virtual keys
+        unload_virtual_key(HKEY_LOCAL_MACHINE);
+        unload_virtual_key(HKEY_USERS);
+        
+        // Delete the hive files
+        auto target_directory = virtual_reg_data_dir_ + L"\\HKLM_" + vm_prefix_;
+        fs::remove_all(target_directory);
+        
+        target_directory = virtual_reg_data_dir_ + L"\\HKEY_USERS_" + vm_prefix_;
+        fs::remove_all(target_directory);
+    }
+}
+```
+
+**Location**: `virtual_reg.cpp:176-197`
+
+### Unloading Hives
+
+```cpp
+bool virtual_registry::unload_virtual_key(const HKEY root_key) const
+{
+    const auto root_name = root_key == HKEY_LOCAL_MACHINE 
+        ? L"HKLM" 
+        : L"HKEY_USERS";
+    
+    // Find all keys with our VM prefix
+    auto virtual_reg_names = enumerate_key_names(root_key);
+    
+    for (const auto& reg_name : virtual_reg_names) {
+        if (reg_name.starts_with(vm_prefix_)) {
+            // Unload this virtual hive
+            const auto reg_command = std::wstring{L"reg unload "} 
+                + root_name + L"\\" + reg_name;
+            
+            create_reg_process(reg_command);
+        }
+    }
+    
+    return true;
+}
+```
+
+**Location**: `virtual_reg.cpp:155-173`
+
+## Registry System Call Interception
+
+Dr.Semu intercepts registry-related system calls using DynamoRIO:
+
+### Monitored System Calls
+
+From `DrSemu/DrSemu.cpp:512-628`, these registry calls are hooked:
+
+**Basic Operations:**
+- `NtOpenKey` - Open registry key
+- `NtOpenKeyEx` - Open registry key (extended)
+- `NtCreateKey` - Create registry key
+- `NtDeleteKey` - Delete registry key
+- `NtDeleteValueKey` - Delete registry value
+- `NtQueryKey` - Query key information
+- `NtQueryValueKey` - Query value data
+- `NtSetValueKey` - Set value data
+- `NtEnumerateKey` - Enumerate subkeys
+- `NtEnumerateValueKey` - Enumerate values
+
+**Advanced Operations:**
+- `NtNotifyChangeKey` - Monitor key changes
+- `NtNotifyChangeMultipleKeys` - Monitor multiple keys
+- `NtCompactKeys` - Compact registry keys
+- `NtCompressKey` - Compress registry key
+- `NtFlushKey` - Flush key to disk
+
+**Transacted Operations:**
+- `NtCreateKeyTransacted` - Create key in transaction
+- `NtOpenKeyTransacted` - Open key in transaction
+- `NtOpenKeyTransactedEx` - Open key in transaction (extended)
+
+**Hive Operations:**
+- `NtLoadKey` / `NtLoadKey2` / `NtLoadKeyEx` - Load registry hive
+- `NtSaveKey` / `NtSaveKeyEx` - Save registry hive
+- `NtFreezeRegistry` - Freeze registry for backup
+- `NtInitializeRegistry` - Initialize registry
+- `NtLockRegistryKey` - Lock registry key
+
+**Query Operations:**
+- `NtQueryMultipleValueKey` - Query multiple values
+- `NtQueryOpenSubKeys` - Query open subkeys
+- `NtQueryOpenSubKeysEx` - Query open subkeys (extended)
+
+### Handler Implementation
+
+Handlers are implemented in `registry_handlers.hpp`:
+
+```cpp
+namespace dr_semu::registry::handlers
+{
+    bool NtOpenKey_handler(void* drcontext);
+    bool NtCreateKey_handler(void* drcontext);
+    bool NtSetValueKey_handler(void* drcontext);
+    bool NtQueryValueKey_handler(void* drcontext);
+    // ... etc
+}
+```
+
+Each handler:
+1. Extracts system call parameters
+2. Translates registry paths (adds VM prefix)
+3. Logs the operation to JSON
+4. Allows the call to proceed with modified path
+
+## Storage Structure
+
+Registry hives are stored on disk:
+
+```
+virtual_reg/
+  HKLM/              # Master copies
+    SOFTWARE
+    SYSTEM
+    HARDWARE
+    SAM
+    SECURITY
+  HKEY_USERS/        # Master copies
+    .DEFAULT
+    S-1-5-18
+    ...
+  HKLM_dr_semu_0/    # VM instance 0
+    SOFTWARE
+    SYSTEM
+    ...
+  HKEY_USERS_dr_semu_0/  # VM instance 0
+    .DEFAULT
+    ...
+```
+
+### Master Copies
+
+The first time Dr.Semu runs, it creates master copies in `virtual_reg/HKLM/` and `virtual_reg/HKEY_USERS/`. These are reused for subsequent runs to avoid re-saving.
+
+### Instance Copies
+
+Each analysis instance gets its own copy with a unique prefix (`dr_semu_0`, `dr_semu_1`, etc.). This allows:
+- Parallel execution of multiple samples
+- Isolation between concurrent analyses
+- Clean state for each sample
+
+## Performance Considerations
+
+### Initial Hive Saving
+
+First run is slow due to hive saving:
+- Enumerates all registry keys
+- Saves each hive to disk
+- Can take 30-60 seconds
+
+**Optimization**: Master copies are created once and reused.
+
+### Hive Loading
+
+Loading hives is relatively fast:
+- Uses Windows `reg load` command
+- Hives are memory-mapped, not fully loaded
+- Takes a few seconds per instance
+
+### Runtime Performance
+
+Once loaded:
+- Registry access is nearly native speed
+- No additional redirection overhead
+- Windows registry cache applies normally
+
+## Isolation Guarantees
+
+### What's Isolated
+
+**Registry modifications** made by malware:
+- Creating new keys
+- Setting values
+- Deleting keys/values
+- Changing permissions
+
+All changes affect only the cloned hives.
+
+### What's Shared (Read-Only)
+
+The isolation is copy-on-write-like:
+- Initial state is a snapshot of the real registry
+- Changes don't affect the host registry
+- But changes also don't sync back
+
+### Limitations
+
+**Real-time changes** to the host registry during analysis are not reflected in the virtual registry, since it's a point-in-time snapshot.
+
+**Special keys** like `HKEY_CURRENT_USER` may require special handling depending on the user context.
+
+## Security Considerations
+
+### Privilege Requirements
+
+Loading registry hives requires:
+- **SeRestorePrivilege** - To load hives
+- **SeBackupPrivilege** - To save hives
+- **Administrator rights** - Usually required
+
+Dr.Semu must run elevated.
+
+### Key Filtering
+
+Dr.Semu skips its own keys:
+
+```cpp
+if (key_name.starts_with(L"dr_semu")) {
+    continue;  // Don't clone Dr.Semu keys
+}
+```
+
+**Location**: `virtual_reg.cpp:72-75`
+
+This prevents:
+- Recursive cloning
+- Interference with running instances
+- Malware tampering with Dr.Semu state
+
+## Debugging Registry Redirection
+
+### View Loaded Hives
+
+Use Registry Editor (regedit.exe):
+1. Navigate to `HKEY_LOCAL_MACHINE`
+2. Look for keys named `dr_semu_*!*`
+3. These are the loaded virtual hives
+
+### Inspect Hive Files
+
+Hive files in `virtual_reg/` directory:
+- Binary format (same as real registry hives)
+- Can be loaded into Registry Editor using File → Load Hive
+- Can be analyzed with registry forensic tools
+
+### Enable Logging
+
+The code uses spdlog for logging:
+
+```cpp
+spdlog::info("virtual REG unloaded successfully");
+spdlog::error("Failed to load a virtual Registry");
+```
+
+Enable verbose logging to debug issues.
+
+## Source Files
+
+Registry virtualization implementation:
+
+- `virtual_FS_REG/virtual_reg.h` - Virtual registry class definition
+- `virtual_FS_REG/virtual_reg.cpp` - Hive cloning and loading implementation
+- `virtual_FS_REG/shared_config.h` - Build configuration
+- `DrSemu/registry_handlers.hpp` - System call handlers (referenced)
+
+## Related Components
+
+The registry redirection works with:
+- [Virtual Filesystem](/advanced/virtual-filesystem) - File system isolation
+- [DynamoRIO Integration](/advanced/dynamorio-integration) - System call interception and path translation

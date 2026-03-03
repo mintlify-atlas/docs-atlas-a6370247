@@ -1,0 +1,361 @@
+---
+title: Filesystem System Calls
+description: File and directory system calls monitored by Dr.Semu
+---
+
+Dr.Semu monitors filesystem-related system calls to track file operations performed by the analyzed binary. All file paths are redirected to a virtual filesystem to ensure safe analysis.
+
+## File Operations
+
+### NtWriteFile
+
+Writes data to a file.
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the file to write to
+</ParamField>
+
+<ParamField path="Event" type="HANDLE" optional>
+  Optional event to signal when operation completes
+</ParamField>
+
+<ParamField path="Buffer" type="PVOID">
+  Pointer to the buffer containing data to write
+</ParamField>
+
+<ParamField path="Length" type="ULONG">
+  Number of bytes to write
+</ParamField>
+
+**Logged Information:**
+- File path
+- Operation success status
+
+---
+
+### NtCreateFile
+
+Creates or opens a file.
+
+<ParamField path="FileHandle" type="PHANDLE">
+  Receives a handle to the file
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights requested for the file
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes of the file to create/open
+</ParamField>
+
+<ParamField path="CreateDisposition" type="ULONG">
+  Action to take if the file exists or does not exist
+</ParamField>
+
+<ParamField path="CreateOptions" type="ULONG">
+  Options for creating the file
+</ParamField>
+
+**Logged Information:**
+- File path
+- Desired access flags
+- File attributes
+- Create disposition
+- Create options
+- Share access
+- Operation success status
+
+---
+
+### NtOpenFile
+
+Opens an existing file.
+
+<ParamField path="FileHandle" type="PHANDLE">
+  Receives a handle to the file
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights requested for the file
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes of the file to open
+</ParamField>
+
+<ParamField path="ShareAccess" type="ULONG">
+  Type of share access
+</ParamField>
+
+<ParamField path="OpenOptions" type="ULONG">
+  Options for opening the file
+</ParamField>
+
+**Logged Information:**
+- File path
+- Desired access flags
+- Share access
+- Operation success status
+
+---
+
+### NtDeleteFile
+
+Deletes a file.
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes of the file to delete
+</ParamField>
+
+**Logged Information:**
+- File path
+- Operation success status
+
+---
+
+### NtClose
+
+Closes a handle to a file or other object.
+
+<ParamField path="Handle" type="HANDLE">
+  Handle to close
+</ParamField>
+
+---
+
+## File Information
+
+### NtQueryInformationFile
+
+Retrieves information about a file.
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the file
+</ParamField>
+
+<ParamField path="FileInformationClass" type="FILE_INFORMATION_CLASS">
+  Type of information to retrieve
+</ParamField>
+
+**Logged Information:**
+- File handle
+- Information class
+- File path
+- Operation success status
+
+---
+
+### NtSetInformationFile
+
+Sets information for a file, including renaming operations.
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the file
+</ParamField>
+
+<ParamField path="FileInformation" type="PVOID">
+  Buffer containing the information to set
+</ParamField>
+
+<ParamField path="FileInformationClass" type="FILE_INFORMATION_CLASS">
+  Type of information to set
+</ParamField>
+
+**Special Handling:**
+- File rename operations are tracked separately
+- Logs both old and new paths for rename operations
+
+---
+
+### NtQueryAttributesFile
+
+Retrieves basic attributes of a file.
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes identifying the file
+</ParamField>
+
+<ParamField path="FileInformation" type="PFILE_BASIC_INFORMATION">
+  Receives the file attributes
+</ParamField>
+
+---
+
+### NtQueryFullAttributesFile
+
+Retrieves extended attributes of a file.
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes identifying the file
+</ParamField>
+
+<ParamField path="FileInformation" type="PFILE_NETWORK_OPEN_INFORMATION">
+  Receives the extended file attributes
+</ParamField>
+
+**Logged Information:**
+- File path
+- Operation success status
+
+---
+
+## Directory Operations
+
+### NtQueryDirectoryFile
+
+Enumerates files in a directory.
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the directory
+</ParamField>
+
+<ParamField path="FileInformationClass" type="FILE_INFORMATION_CLASS">
+  Type of information to return for each file
+</ParamField>
+
+<ParamField path="FileName" type="PUNICODE_STRING" optional>
+  Optional filter pattern
+</ParamField>
+
+**Special Handling:**
+- Virtual filesystem directories are hidden from enumeration results
+
+---
+
+### NtQueryDirectoryFileEx
+
+Extended version of NtQueryDirectoryFile.
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the directory
+</ParamField>
+
+<ParamField path="FileInformationClass" type="FILE_INFORMATION_CLASS">
+  Type of information to return
+</ParamField>
+
+<ParamField path="QueryFlags" type="ULONG">
+  Flags controlling the query
+</ParamField>
+
+---
+
+### NtCreateDirectoryObject
+
+Creates or opens a directory object.
+
+<ParamField path="DirectoryHandle" type="PHANDLE">
+  Receives a handle to the directory object
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Access rights for the directory
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes of the directory object
+</ParamField>
+
+---
+
+## Section Objects
+
+### NtCreateSection
+
+Creates a section object (memory-mapped file).
+
+<ParamField path="SectionHandle" type="PHANDLE">
+  Receives a handle to the section
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access to the section
+</ParamField>
+
+<ParamField path="FileHandle" type="HANDLE" optional>
+  Optional handle to file to map
+</ParamField>
+
+<ParamField path="SectionPageProtection" type="ULONG">
+  Memory protection for the section
+</ParamField>
+
+---
+
+### NtMapViewOfSection
+
+Maps a view of a section into the virtual address space.
+
+<ParamField path="SectionHandle" type="HANDLE">
+  Handle to the section object
+</ParamField>
+
+<ParamField path="ProcessHandle" type="HANDLE">
+  Handle to the process
+</ParamField>
+
+<ParamField path="BaseAddress" type="PVOID*">
+  Pointer to receive the base address
+</ParamField>
+
+---
+
+## Other File Operations
+
+### NtFlushBuffersFile
+
+Flushes buffered data to disk.
+
+<ParamField path="FileHandle" type="HANDLE">
+  Handle to the file
+</ParamField>
+
+---
+
+### NtCreateSymbolicLinkObject
+
+Creates a symbolic link object.
+
+<ParamField path="LinkHandle" type="PHANDLE">
+  Receives a handle to the symbolic link
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Attributes of the symbolic link
+</ParamField>
+
+<ParamField path="LinkTarget" type="PUNICODE_STRING">
+  Target of the symbolic link
+</ParamField>
+
+---
+
+### NtCreatePagingFile
+
+Creates a paging file.
+
+**Access Control:**
+This operation is denied with STATUS_PRIVILEGE_NOT_HELD as it requires elevated privileges.
+
+---
+
+### NtCreateIoCompletion
+
+Creates an I/O completion object.
+
+<ParamField path="IoCompletionHandle" type="PHANDLE">
+  Receives a handle to the I/O completion object
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES" optional>
+  Optional object attributes
+</ParamField>

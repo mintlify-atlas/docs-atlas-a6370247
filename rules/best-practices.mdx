@@ -1,0 +1,530 @@
+---
+title: Best Practices
+description: Guidelines for writing effective and efficient detection rules
+---
+
+Follow these best practices to create robust, performant, and maintainable detection rules for Dr.Semu.
+
+## Rule Design Principles
+
+### Start with Clear Objectives
+
+Define what you're detecting before writing code:
+
+<Steps>
+  <Step title="Identify the threat">
+    What malware family or behavior are you targeting?
+  </Step>
+  <Step title="List indicators">
+    What static or dynamic indicators signal this threat?
+  </Step>
+  <Step title="Prioritize signals">
+    Which indicators are most reliable and least likely to false positive?
+  </Step>
+  <Step title="Plan logic">
+    Should indicators be combined (AND) or independent (OR)?
+  </Step>
+</Steps>
+
+### Minimize False Positives
+
+<Warning>
+False positives erode trust in your detection system. Always test rules against benign samples.
+</Warning>
+
+**Techniques to reduce false positives:**
+
+1. **Combine multiple indicators** - Use AND logic for stronger confidence
+2. **Be specific** - Prefer exact matches over broad patterns
+3. **Consider context** - A behavior may be suspicious only in certain contexts
+4. **Test extensively** - Validate against diverse benign and malicious samples
+
+## Performance Optimization
+
+### Return Early
+
+Exit as soon as a verdict is reached:
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    -- From wannacry_url.lua:27-31
+    if win_func.InternetOpenUrlA and win_func.InternetOpenUrlA.before.url then
+        local url = win_func.InternetOpenUrlA.before.url:lower()
+        if url == "http://www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com" then
+            return "Win32.WannaCry.DR"  -- Stop immediately
+        end
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    # From dr_semu_eicar.py:17-21
+    for win_func in dynamic_info:
+        if "NtCreateUserProcess" in win_func:
+            image_path = win_func["NtCreateUserProcess"]["before"]["image_path"]
+            if image_path.lower().endswith("drsemu_eicar.exe"):
+                return b"Win32.EICAR.Dr"  # Stop immediately
+    ```
+  </Tab>
+</Tabs>
+
+### Validate Data Before Processing
+
+Always check for nil/None before accessing nested fields:
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    -- From sample_rule.lua:17-20
+    local is_x86 = false
+    if first_static ~= nil then
+        is_x86 = first_static.generic.is_x86
+    end
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    # Validate before processing
+    image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+    if image_path is None:
+        return b"CLEAN"  # No data available
+    ```
+  </Tab>
+</Tabs>
+
+### Load Only Required Data
+
+Don't load static analysis if you only need dynamic behavior:
+
+```lua
+-- Bad: Loading unnecessary data
+local first_static = utils.get_first_static(report_directory)
+local first_dynamic = utils.get_first_process_json(report_directory)
+
+-- Only using dynamic data
+if first_dynamic ~= nil then
+    -- ...
+end
+```
+
+```lua
+-- Good: Load only what you need
+local first_dynamic = utils.get_first_process_json(report_directory)
+
+if first_dynamic ~= nil then
+    -- ...
+end
+```
+
+### Cache Expensive Operations
+
+<Tabs>
+  <Tab title="Lua">
+    ```lua
+    -- From wannacry_url.lua:28
+    local url = win_func.InternetOpenUrlA.before.url:lower()
+    -- Now reuse 'url' instead of calling :lower() multiple times
+    ```
+  </Tab>
+  
+  <Tab title="Python">
+    ```python
+    # Cache case conversion
+    image_path_lower = image_path.lower()
+    
+    if "cmd.exe" in image_path_lower or "powershell.exe" in image_path_lower:
+        # Use cached value
+        pass
+    ```
+  </Tab>
+</Tabs>
+
+## Code Quality
+
+### Use Descriptive Variable Names
+
+```lua
+-- Bad
+local d = utils.get_first_process_json(report_directory)
+local s = utils.get_first_static(report_directory)
+
+-- Good (from sample_rule.lua:10-11)
+local first_dynamic = utils.get_first_process_json(report_directory)
+local first_static = utils.get_first_static(report_directory)
+```
+
+### Check API Call Success
+
+From `sample_rule.lua:30` and `sample_rule.lua:47`:
+
+```lua
+-- Always verify success before using results
+if win_func.NtCreateUserProcess.success == true then
+    local target_PID = win_func.NtCreateUserProcess.after.proc_id
+    -- Safe to use proc_id
+end
+
+if win_func.NtCreateKey and win_func.NtCreateKey.success == true then
+    -- Safe to access key_path
+    if win_func.NtCreateKey.before.key_path:find("malicious_key") then
+        return "Dr.Semu!TEST"
+    end
+end
+```
+
+### Handle Missing Fields Gracefully
+
+From `sample_rule.lua:39`:
+
+```lua
+-- Check field exists before using string methods
+if win_func.NtCreateUserProcess.before.image_path ~= nil then
+    if win_func.NtCreateUserProcess.before.image_path:find("whoami") then
+        return "WHOAMI!EXE"
+    end
+end
+```
+
+## Detection Patterns
+
+### Single Strong Indicator
+
+Use when an indicator is definitive:
+
+```lua
+-- From wannacry_url.lua:27-31
+if win_func.InternetOpenUrlA and win_func.InternetOpenUrlA.before.url then
+    local url = win_func.InternetOpenUrlA.before.url:lower()
+    if url == "http://www.iuqerfsodp9ifjaposdfjhgosurijfaewrwergwea.com" then
+        return "Win32.WannaCry.DR"  -- Kill switch URL is definitive
+    end
+end
+```
+
+<Info>
+The WannaCry kill switch URL is a perfect strong indicator - it's unique and specific to WannaCry.
+</Info>
+
+### Multiple Weak Indicators
+
+Combine several suspicious behaviors:
+
+```python
+# Combine multiple indicators
+def check(report_directory):
+    verdict = b"CLEAN"
+    
+    image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+    dynamic_info = dr_semu_utils.get_json_from_file(
+        report_directory + b"\\" + str(pid).encode() + b".json"
+    )
+    
+    if not dynamic_info:
+        return verdict
+    
+    # Track suspicious behaviors
+    spawned_cmd = False
+    modified_autorun = False
+    deleted_files = False
+    
+    for win_func in dynamic_info:
+        if "NtCreateUserProcess" in win_func:
+            img = win_func["NtCreateUserProcess"]["before"]["image_path"].lower()
+            if "cmd.exe" in img:
+                spawned_cmd = True
+        
+        if "NtSetValueKey" in win_func:
+            key = win_func["NtSetValueKey"]["before"]["key_path"]
+            if "Run" in key:
+                modified_autorun = True
+        
+        if "NtDeleteFile" in win_func:
+            deleted_files = True
+    
+    # Require all three indicators
+    if spawned_cmd and modified_autorun and deleted_files:
+        return b"Win32.Suspicious.MultiIndicator"
+    
+    return verdict
+```
+
+### Process Tree Analysis
+
+From `sample_rule.lua:28-36`:
+
+```lua
+-- Analyze child processes
+if win_func.NtCreateUserProcess then
+    if win_func.NtCreateUserProcess.success == true then
+        local target_PID = win_func.NtCreateUserProcess.after.proc_id
+        local decoded_json = utils.get_json_pid(report_directory, target_PID)
+        if not decoded_json.empty then
+            -- enumerate a json of the child process
+            for index, child_func in pairs(decoded_json) do
+                -- Analyze child behavior recursively
+            end
+        end
+    end
+end
+```
+
+<Tip>
+Process tree analysis is powerful for detecting multi-stage malware and living-off-the-land attacks.
+</Tip>
+
+## Language-Specific Best Practices
+
+### Lua Rules
+
+<AccordionGroup>
+  <Accordion title="Use local variables">
+    Local variables are faster than globals:
+    ```lua
+    -- Good (from sample_rule.lua:7)
+    local status = "CLEAN"
+    
+    -- Bad
+    status = "CLEAN"  -- Global variable
+    ```
+  </Accordion>
+  
+  <Accordion title="Require utils at the top">
+    Always import utils at file start:
+    ```lua
+    -- From wannacry_url.lua:2
+    utils = require "utils"
+    ```
+  </Accordion>
+  
+  <Accordion title="Use string methods efficiently">
+    ```lua
+    -- Cache lowercased strings (from wannacry_url.lua:28)
+    local url = win_func.InternetOpenUrlA.before.url:lower()
+    
+    -- Use :find() for substring matching (from sample_rule.lua:40)
+    if image_path:find("whoami") then
+        return "WHOAMI!EXE"
+    end
+    ```
+  </Accordion>
+</AccordionGroup>
+
+### Python Rules
+
+<AccordionGroup>
+  <Accordion title="Always return bytes">
+    From `dr_semu_eicar.py:15` and `dr_semu_eicar.py:21`:
+    ```python
+    verdict = b"CLEAN"  # Use b"" prefix
+    return b"Win32.EICAR.Dr"  # Not "Win32.EICAR.Dr"
+    ```
+  </Accordion>
+  
+  <Accordion title="Handle bytes vs strings">
+    ```python
+    # report_directory is bytes
+    image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+    
+    # Convert to bytes when building paths (from dr_semu_eicar.py:11-12)
+    static_path = report_directory + b"\\" + sha_256.encode() + b".json"
+    dynamic_path = report_directory + b"\\" + str(pid).encode() + b".json"
+    ```
+  </Accordion>
+  
+  <Accordion title="Import required modules">
+    From `dr_semu_eicar.py:1-6`:
+    ```python
+    import json
+    import os
+    import dr_semu_utils
+    
+    # don't forget to add module names into py_imports.config file
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## Testing and Validation
+
+### Test Against Benign Samples
+
+Before deploying, test your rule against:
+
+- Common legitimate software (browsers, Office apps, system tools)
+- Development tools (compilers, IDEs)
+- System processes (svchost.exe, explorer.exe)
+
+### Test Against Target Malware
+
+Verify detection against:
+
+- Known samples of the target malware family
+- Variants with minor modifications
+- Packed/obfuscated versions
+
+### Edge Case Testing
+
+<Tip>
+Test your rules with:
+- Empty/corrupted JSON files
+- Missing starter.json
+- Processes with no API calls
+- Very large JSON files (thousands of API calls)
+</Tip>
+
+## Documentation
+
+### Comment Complex Logic
+
+From `sample_rule.lua:13-15` and `sample_rule.lua:28-29`:
+
+```lua
+-- 
+--  your code starts from here
+-- 
+
+-- get information from a call, e.g. if the call is NtCreateUserProcess
+if win_func.NtCreateUserProcess then
+    -- Get a PID of a new process, with PID we can enumerate calls from a new process
+```
+
+### Include Rule Metadata
+
+```lua
+-- Rule Name: WannaCry Kill Switch Detection
+-- Author: Security Team
+-- Date: 2024-01-15
+-- Description: Detects WannaCry ransomware by identifying access to kill switch URL
+-- MITRE ATT&CK: T1486 (Data Encrypted for Impact)
+
+utils = require "utils"
+
+function check(report_directory)
+    -- Rule logic
+end
+```
+
+## Common Pitfalls
+
+<Warning>
+Avoid these common mistakes:
+</Warning>
+
+### Don't Skip Null Checks
+
+```lua
+-- Bad: Will crash if field is nil
+if win_func.NtCreateUserProcess.before.image_path:find("malware") then
+    return "Detected"
+end
+
+-- Good: Check nil first (from sample_rule.lua:39)
+if win_func.NtCreateUserProcess.before.image_path ~= nil then
+    if win_func.NtCreateUserProcess.before.image_path:find("malware") then
+        return "Detected"
+    end
+end
+```
+
+### Don't Use Hardcoded Paths
+
+```python
+# Bad: Hardcoded path
+data = dr_semu_utils.get_json_from_file(b"C:\\reports\\1234.json")
+
+# Good: Use report_directory parameter (from dr_semu_eicar.py:10-12)
+image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+data = dr_semu_utils.get_json_from_file(
+    report_directory + b"\\" + str(pid).encode() + b".json"
+)
+```
+
+### Don't Ignore API Success Status
+
+```lua
+-- Bad: Accessing results without checking success
+local target_PID = win_func.NtCreateUserProcess.after.proc_id
+
+-- Good: Check success first (from sample_rule.lua:30-31)
+if win_func.NtCreateUserProcess.success == true then
+    local target_PID = win_func.NtCreateUserProcess.after.proc_id
+end
+```
+
+### Don't Mix Bytes and Strings (Python)
+
+```python
+# Bad: Mixing types
+path = report_directory + "\\" + str(pid) + ".json"  # Type error!
+
+# Good: Keep everything as bytes (from dr_semu_eicar.py:12)
+path = report_directory + b"\\" + str(pid).encode() + b".json"
+```
+
+## Security Considerations
+
+### Avoid Executing External Commands
+
+<Warning>
+Never execute external processes or system commands from rules. Rules should only analyze data.
+</Warning>
+
+### Sanitize Output
+
+Detection verdicts become part of reports - avoid including:
+- Sensitive file paths
+- User credentials or tokens
+- Excessive debug information
+
+```lua
+-- Bad
+return "Detected malware at " .. win_func.NtCreateFile.before.file_path
+
+-- Good
+return "Win32.Malware.FileCreation"
+```
+
+## Version Control
+
+### Use Meaningful Rule Names
+
+```
+# Good
+wannacry_url.lua
+dr_semu_eicar.py
+emotет_c2_detection.lua
+
+# Bad
+rule1.lua
+test.py
+my_rule.lua
+```
+
+### Track Rule Changes
+
+Maintain a changelog in rule comments:
+
+```lua
+-- Version History:
+-- v1.0 (2024-01-15): Initial release
+-- v1.1 (2024-02-01): Added check for variant URL
+-- v1.2 (2024-03-10): Improved null handling
+```
+
+## Next Steps
+
+<CardGroup cols={3}>
+  <Card title="Lua Rules" icon="code" href="/rules/lua-rules">
+    Lua API reference
+  </Card>
+  
+  <Card title="Python Rules" icon="python" href="/rules/python-rules">
+    Python API reference
+  </Card>
+  
+  <Card title="Rule Examples" icon="file-code" href="/rules/rule-examples">
+    Real rule examples
+  </Card>
+</CardGroup>

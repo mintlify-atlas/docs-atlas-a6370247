@@ -1,0 +1,590 @@
+---
+title: DynamoRIO Integration
+description: How Dr.Semu uses DynamoRIO for system call interception and behavior monitoring
+---
+
+Dr.Semu uses DynamoRIO, a dynamic binary instrumentation framework, to intercept system calls and monitor malware behavior without kernel-mode hooks.
+
+## Overview
+
+DynamoRIO provides:
+
+- **User-mode interception** - No kernel drivers required
+- **Binary instrumentation** - Works on any Windows executable
+- **System call hooks** - Intercept at user-kernel boundary
+- **Multi-architecture** - Supports both 32-bit and 64-bit
+
+## Architecture
+
+### DynamoRIO Client
+
+Dr.Semu implements a DynamoRIO client in `DrSemu/DrSemu.cpp`:
+
+```cpp
+DR_EXPORT void dr_client_main(client_id_t id, int argc, const char* argv[])
+{
+    dr_set_client_name("Dr.Semu",
+                       "https://github.com/secrary/DrSemu");
+    
+    // Initialize DynamoRIO extensions
+    drmgr_init();
+    drwrap_init();
+    drx_init();
+    
+    // Register callbacks
+    dr_register_filter_syscall_event(event_filter_syscall);
+    drmgr_register_pre_syscall_event(event_pre_syscall);
+    drmgr_register_post_syscall_event(event_post_syscall);
+    drmgr_register_module_load_event(module_load_event);
+    dr_register_exit_event(event_exit);
+    
+    // Register nudge for process termination
+    dr_register_nudge_event(nudge_event, client_id);
+    drx_register_soft_kills(soft_kill_event);
+}
+```
+
+**Location**: `DrSemu/DrSemu.cpp:113-284`
+
+### Client Execution
+
+Dr.Semu is loaded into the target process:
+
+```
+drrun.exe -c DrSemu.dll [options] -- malware.exe
+```
+
+DynamoRIO (`drrun.exe`):
+1. Creates the target process suspended
+2. Injects `dynamorio.dll` into the process
+3. Loads the Dr.Semu client (`DrSemu.dll`)
+4. Transfers control to the client
+5. Resumes the target process
+
+## System Call Interception
+
+### 1. System Call Filtering
+
+First, filter which system calls to intercept:
+
+```cpp
+static bool event_filter_syscall(void* drcontext, int sysnum)
+{
+    // Only intercept system calls we care about
+    return dr_semu::syscall::syscall_numbers.find(sysnum) != 
+           dr_semu::syscall::syscall_numbers.end();
+}
+```
+
+**Location**: `DrSemu.cpp:413-417`
+
+This filters hundreds of system calls down to ~70 relevant ones for malware analysis.
+
+### 2. Pre-Syscall Handler
+
+Intercept before the system call executes:
+
+```cpp
+static bool event_pre_syscall(void* drcontext, int sysnum)
+{
+    if (dr_semu::syscall::syscall_numbers.find(sysnum) != 
+        dr_semu::syscall::syscall_numbers.end())
+    {
+        const auto syscall_name = dr_semu::syscall::syscall_numbers[sysnum];
+        
+        // Dispatch to specific handler
+        if (syscall_name == NTWRITEFILE) {
+            return dr_semu::filesystem::handlers::NtWriteFile_handler(drcontext);
+        }
+        if (syscall_name == NTCREATEFILE) {
+            return dr_semu::filesystem::handlers::NtCreateFile_handler(drcontext);
+        }
+        // ... many more handlers ...
+    }
+    
+    return true;  // Execute system call normally
+}
+```
+
+**Location**: `DrSemu.cpp:419-741`
+
+### 3. Post-Syscall Handler
+
+Intercept after the system call completes:
+
+```cpp
+void event_post_syscall(void* drcontext, int sysnum)
+{
+    if (dr_semu::syscall::syscall_numbers.find(sysnum) != 
+        dr_semu::syscall::syscall_numbers.end())
+    {
+        const auto syscall_name = dr_semu::syscall::syscall_numbers[sysnum];
+        
+        if (syscall_name == NTCREATEUSERPROCESS) {
+            dr_semu::process::handlers::NtCreateUserProcess_post_handler(drcontext);
+        }
+    }
+}
+```
+
+**Location**: `DrSemu.cpp:743-755`
+
+Post-handlers can:
+- Read return values
+- Access output parameters
+- Log results
+
+## Monitored System Calls
+
+Dr.Semu monitors ~70 system calls across several categories:
+
+### File System (20+ calls)
+
+**Location**: `DrSemu.cpp:429-508`
+
+- `NtCreateFile` / `NtOpenFile` - Open files
+- `NtWriteFile` - Write to files
+- `NtDeleteFile` - Delete files
+- `NtQueryInformationFile` - Query file info
+- `NtSetInformationFile` - Set file info
+- `NtQueryAttributesFile` - Get file attributes
+- `NtCreateSection` - Create file mapping
+- `NtMapViewOfSection` - Map file into memory
+- `NtQueryDirectoryFile` - Enumerate directory
+- `NtFlushBuffersFile` - Flush file buffers
+
+### Registry (30+ calls)
+
+**Location**: `DrSemu.cpp:511-628`
+
+- `NtOpenKey` / `NtOpenKeyEx` - Open registry keys
+- `NtCreateKey` - Create registry keys
+- `NtDeleteKey` / `NtDeleteValueKey` - Delete keys/values
+- `NtQueryKey` / `NtQueryValueKey` - Query registry data
+- `NtSetValueKey` - Write registry values
+- `NtEnumerateKey` / `NtEnumerateValueKey` - Enumerate keys/values
+- `NtLoadKey` / `NtSaveKey` - Load/save hives
+
+### Process/Thread (15+ calls)
+
+**Location**: `DrSemu.cpp:631-679`
+
+- `NtCreateUserProcess` - Create process
+- `NtOpenProcess` / `NtOpenThread` - Open process/thread
+- `NtWriteVirtualMemory` - Write process memory
+- `NtProtectVirtualMemory` - Change memory protection
+- `NtSetContextThread` - Modify thread context
+- `NtSuspendProcess` - Suspend process
+- `NtQueryInformationProcess` - Query process info
+- `NtQueryVirtualMemory` - Query memory info
+- `NtDelayExecution` - Sleep
+
+### System Information (5+ calls)
+
+**Location**: `DrSemu.cpp:681-697`
+
+- `NtQuerySystemInformation` - Query system info
+- `NtLoadDriver` - Load kernel driver
+- `NtUserSystemParametersInfo` - System parameters
+- `NtRaiseHardError` - Display error dialog
+
+### Object Management (10+ calls)
+
+**Location**: `DrSemu.cpp:699-735`
+
+- `NtCreateMutant` / `NtOpenMutant` - Mutexes
+- `NtCreateEvent` / `NtOpenEvent` - Events
+- `NtCreateSemaphore` / `NtOpenSemaphore` - Semaphores
+- `NtWaitForSingleObject` - Wait for object
+- `NtQueryObject` - Query object info
+- `NtCreateMailslotFile` - Create mailslot
+
+## Function Wrapping
+
+Dr.Semu also wraps high-level API functions:
+
+```cpp
+void module_load_event(void* drcontext, const module_data_t* mod, bool Loaded)
+{
+    // COM functions
+    wrap_function(mod->handle, "CoCreateInstance",
+                  dr_semu::com::handlers::pre_co_create_instance, nullptr);
+    wrap_function(mod->handle, "CoCreateInstanceEx",
+                  dr_semu::com::handlers::pre_co_create_instance_ex, nullptr);
+    wrap_function(mod->handle, "CoGetClassObject",
+                  dr_semu::com::handlers::pre_get_class_object, nullptr);
+    
+    // Networking functions
+    wrap_function(mod->handle, "WSAStartup",
+                  dr_semu::networking::handlers::pro_wsa_startup, nullptr);
+    wrap_function(mod->handle, "URLDownloadToFileW",
+                  dr_semu::networking::handlers::pro_url_download_to_file, nullptr);
+    wrap_function(mod->handle, "gethostbyname",
+                  dr_semu::networking::handlers::pro_gethostbyname, nullptr);
+    wrap_function(mod->handle, "InternetOpenUrlW",
+                  dr_semu::networking::handlers::pro_InternetOpenUrlW, nullptr);
+}
+```
+
+**Location**: `DrSemu.cpp:772-790`
+
+This uses DynamoRIO's `drwrap` extension to intercept function calls:
+
+```cpp
+static bool wrap_function(
+    const module_handle_t handle,
+    const std::string& function_name,
+    void (*pre_func_cb)(void* wrapcxt, OUT void** user_data),
+    void (*post_func_cb)(void* wrapcxt, void* user_data))
+{
+    const auto func_ptr = reinterpret_cast<app_pc>(
+        dr_get_proc_address(handle, function_name.c_str()));
+    
+    if (func_ptr != nullptr) {
+        return !drwrap_wrap(func_ptr, pre_func_cb, post_func_cb);
+    }
+    return false;
+}
+```
+
+**Location**: `DrSemu.cpp:757-769`
+
+## Parameter Access
+
+Handlers extract system call parameters from registers/stack:
+
+```cpp
+bool NtCreateFile_handler(void* drcontext)
+{
+    // Get system call parameters
+    auto file_handle = (PHANDLE)drsys_get_arg(drcontext, 0);
+    auto desired_access = (ACCESS_MASK)drsys_get_arg(drcontext, 1);
+    auto object_attributes = (POBJECT_ATTRIBUTES)drsys_get_arg(drcontext, 2);
+    auto io_status_block = (PIO_STATUS_BLOCK)drsys_get_arg(drcontext, 3);
+    // ... more parameters ...
+    
+    // Read file path from OBJECT_ATTRIBUTES
+    UNICODE_STRING* file_name = object_attributes->ObjectName;
+    std::wstring path(file_name->Buffer, file_name->Length / sizeof(wchar_t));
+    
+    // Translate virtual path to real path
+    std::wstring translated_path = translate_path(path);
+    
+    // Log to JSON
+    json entry;
+    entry["syscall"] = "NtCreateFile";
+    entry["path"] = wstring_to_utf8(translated_path);
+    entry["access"] = desired_access;
+    dr_semu::shared_variables::json_concurrent_vector.push_back(entry);
+    
+    return true;  // Continue execution
+}
+```
+
+This is a simplified example. Actual handlers in `filesystem_handlers.hpp` are more complex.
+
+## Path Translation
+
+Handlers translate virtual paths to real paths:
+
+### Filesystem Path Translation
+
+Virtual path: `\Device\HarddiskVolume2\dr_semu_0\Windows\System32\kernel32.dll`
+
+Translated to: `\Device\HarddiskVolume2\Windows\System32\kernel32.dll`
+
+The virtual root (`\dr_semu_0`) is stripped.
+
+### Registry Path Translation
+
+Virtual path: `\Registry\Machine\Software\Microsoft\Windows`
+
+Translated to: `\Registry\Machine\dr_semu_0!Software\Microsoft\Windows`
+
+The VM prefix is inserted after the root key.
+
+## Behavior Logging
+
+All intercepted operations are logged to JSON:
+
+```cpp
+json json_dynamic;
+if (!dr_semu::shared_variables::json_concurrent_vector.empty())
+{
+    json_dynamic = dr_semu::shared_variables::json_concurrent_vector;
+}
+else
+{
+    json_dynamic["empty"] = 1;
+}
+
+// Write to file: json_reports/PID.json
+const auto report_directory = binary_directory + report_directory_name;
+const auto out_json_file = dr_open_file(
+    (report_directory + "\\" + std::to_string(pid) + ".json").c_str(),
+    DR_FILE_WRITE_OVERWRITE);
+
+const auto json_str = json_dynamic.dump();
+dr_write_file(out_json_file, json_str.data(), json_str.length());
+dr_close_file(out_json_file);
+```
+
+**Location**: `DrSemu.cpp:369-392` (in `event_exit()`)
+
+The JSON file contains:
+- System call name
+- Parameters (file paths, registry keys, etc.)
+- Timestamps
+- Return values
+- Thread ID
+
+## Process Management
+
+### Child Process Tracking
+
+When malware creates child processes:
+
+```cpp
+bool NtCreateUserProcess_handler(void* drcontext)
+{
+    // Handler logs the process creation
+    // ... extract parameters ...
+    
+    return true;  // Allow process creation
+}
+
+void NtCreateUserProcess_post_handler(void* drcontext)
+{
+    // Post-handler gets the new process ID
+    // DynamoRIO automatically injects into child process
+}
+```
+
+**Location**: `DrSemu.cpp:636-638, 750-753`
+
+DynamoRIO automatically follows child processes and injects the Dr.Semu client into them.
+
+### Process Termination
+
+Dr.Semu uses "nudge" mechanism for clean termination:
+
+```cpp
+static void nudge_event(void* drcontext, const uint64 argument)
+{
+    const auto nudge_arg = static_cast<int>(argument);
+    const auto exit_arg = static_cast<int>(argument >> 32);
+    
+    if (nudge_arg == NUDGE_TERMINATE_PROCESS) {
+        dr_exit_process(exit_arg);
+    }
+}
+```
+
+**Location**: `DrSemu.cpp:69-84`
+
+This allows the launcher to gracefully terminate all monitored processes.
+
+### Soft Kill Support
+
+```cpp
+static bool soft_kill_event(process_id_t pid, int exit_code)
+{
+    const auto result = dr_nudge_client_ex(pid, client_id,
+                                           NUDGE_TERMINATE_PROCESS | 
+                                           static_cast<uint64>(exit_code) << 32,
+                                           0);
+    return result == DR_SUCCESS;
+}
+```
+
+**Location**: `DrSemu.cpp:86-94`
+
+This intercepts process termination attempts and converts them to nudges.
+
+## Time Management
+
+Dr.Semu can set execution time limits:
+
+```cpp
+void sleep_and_die(void* limit)
+{
+    const auto time_limit = reinterpret_cast<DWORD>(limit);
+    dr_sleep(time_limit SECONDS);
+    dr_exit_process(0);
+}
+
+// In dr_client_main:
+if (time_limit != 0) {
+    dr_create_client_thread(sleep_and_die, reinterpret_cast<PVOID>(time_limit));
+}
+```
+
+**Location**: `DrSemu.cpp:34-40, 226-230`
+
+This creates a watchdog thread that terminates the process after a timeout.
+
+## Command-Line Options
+
+The client receives options from the launcher:
+
+```cpp
+droption_t<unsigned int> vm_index_option(
+    DROPTION_SCOPE_CLIENT, "vm", 0, "vm index", "VM index number");
+
+droption_t<unsigned int> dumb_pid_option(
+    DROPTION_SCOPE_CLIENT, "pid", 0, "dumb explorer pid",
+    "dumb explorer pid [LONG DESC]");
+
+droption_t<std::string> binaries_dir_option(
+    DROPTION_SCOPE_CLIENT, "bin", "", "bin_dir",
+    "location of binaries");
+
+droption_t<std::string> temp_directory(
+    DROPTION_SCOPE_CLIENT, "dir", "", "VM location",
+    "VM directory for current instance");
+
+droption_t<std::string> report_name_option(
+    DROPTION_SCOPE_CLIENT, "report", "", "report name",
+    "report directory name");
+
+droption_t<unsigned int> time_limit_option(
+    DROPTION_SCOPE_CLIENT, "limit", 0, "limit",
+    "target application will die after _TIME_LIMIT_");
+```
+
+**Location**: `DrSemu.cpp:134-146`
+
+Example command line:
+```
+drrun.exe -c DrSemu.dll -vm 0 -pid 1234 -bin C:\DrSemu\bin \
+          -dir C:\temp -report json_reports -limit 60 -- malware.exe
+```
+
+## Architecture Support
+
+Dr.Semu detects 32-bit vs 64-bit:
+
+```cpp
+enum class arch
+{
+    x86_32,
+    x86_64
+};
+
+// Detect architecture
+dr_semu::shared_variables::current_app_arch = 
+    dr_is_wow64() ? dr_semu::arch::x86_32 : dr_semu::arch::x86_64;
+```
+
+**Location**: `DrSemu.cpp:234`
+
+DynamoRIO provides separate clients:
+- `DrSemu.dll` - 32-bit client for 32-bit processes
+- `DrSemu64.dll` - 64-bit client for 64-bit processes
+
+## Static Analysis Integration
+
+Before instrumentation, Dr.Semu performs static analysis:
+
+```cpp
+if (!is_explorer) {
+    if (!dr_semu::static_info::get_static_info_and_arch(
+            application_full_path,
+            dr_semu::shared_variables::current_app_arch))
+    {
+        dr_printf("[Dr.Semu] failed to get static information\n");
+        dr_abort();
+    }
+}
+```
+
+**Location**: `DrSemu.cpp:238-248`
+
+This uses the pe-parse library to extract:
+- PE headers
+- Imported functions
+- Exported functions
+- Sections
+- Resources
+
+## Performance Considerations
+
+### System Call Filtering
+
+Filtering reduces overhead:
+- Only ~70 of 400+ system calls are intercepted
+- Uninteresting calls execute at native speed
+- Typical overhead: 10-30%
+
+### Concurrent Logging
+
+Uses thread-safe concurrent vector:
+
+```cpp
+#include <concurrent_vector.h>
+using namespace concurrency;
+
+concurrent_vector<json> json_concurrent_vector;
+```
+
+**Location**: `DrSemu/includes.h:43-45`
+
+Multiple threads can log simultaneously without locks.
+
+### Memory Overhead
+
+DynamoRIO uses code cache:
+- Basic blocks are translated once
+- Cached for reuse
+- Memory usage: 10-50 MB typically
+
+## Debugging
+
+### Enable DynamoRIO Logging
+
+```bash
+drrun.exe -verbose 2 -c DrSemu.dll -- malware.exe
+```
+
+### Client Logging
+
+Use `dr_printf()` for debugging:
+
+```cpp
+dr_printf("[Dr.Semu] File path: %s\n", application_full_path.c_str());
+```
+
+Output goes to console if notify is enabled:
+
+```cpp
+if (dr_is_notify_on()) {
+    dr_enable_console_printing();
+}
+```
+
+**Location**: `DrSemu.cpp:125-128`
+
+## Source Files
+
+DynamoRIO integration:
+
+- `DrSemu/DrSemu.cpp` - Main client implementation
+- `DrSemu/includes.h` - Headers and dependencies
+- `DrSemu/filesystem_handlers.hpp` - File system call handlers
+- `DrSemu/registry_handlers.hpp` - Registry call handlers
+- `DrSemu/process_handlers.hpp` - Process/thread handlers
+- `DrSemu/system_handlers.hpp` - System information handlers
+- `DrSemu/COM_handlers.hpp` - COM function handlers
+- `DrSemu/networking_handlers.hpp` - Network function handlers
+- `DrSemu/object_handlers.hpp` - Object management handlers
+
+## Related Resources
+
+- [DynamoRIO Documentation](https://dynamorio.org/)
+- [DynamoRIO API Reference](https://dynamorio.org/docs/)
+- [System Call Reference](https://j00ru.vexillium.org/syscalls/nt/64/)
+
+## Related Components
+
+- [Virtual Filesystem](/advanced/virtual-filesystem) - ProjFS-based file isolation
+- [Registry Redirection](/advanced/registry-redirection) - Registry hive cloning

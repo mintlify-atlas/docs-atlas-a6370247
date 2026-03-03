@@ -1,0 +1,267 @@
+---
+title: 'JSON Report Schema'
+description: 'Structure of Dr.Semu analysis report files'
+---
+
+## Overview
+
+Dr.Semu generates multiple JSON files during analysis, each containing different types of information about the analyzed sample.
+
+## Report Files
+
+A complete analysis report directory contains:
+
+- `starter.json` - Metadata about the initial process
+- `{pid}.json` - Dynamic analysis for each process
+- `{sha256}.json` - Static analysis for each executable
+
+## starter.json
+
+Contains metadata about the initial analyzed process.
+
+```json
+{
+    "empty": false,
+    "image_path": "C:\\path\\to\\sample.exe",
+    "starter_pid": 1234,
+    "sha_256": "abc123..."
+}
+```
+
+<ResponseField name="empty" type="boolean" required>
+  Indicates whether the starter process data is empty. If `true`, analysis did not complete successfully.
+</ResponseField>
+
+<ResponseField name="image_path" type="string">
+  Full path to the executable that was analyzed
+</ResponseField>
+
+<ResponseField name="starter_pid" type="integer">
+  Process ID of the initial process
+</ResponseField>
+
+<ResponseField name="sha_256" type="string">
+  SHA-256 hash of the analyzed executable. Use this to locate the corresponding static analysis file.
+</ResponseField>
+
+## Dynamic Analysis ({pid}.json)
+
+Contains logged Windows API calls for a specific process. The file is an array of API call objects.
+
+```json
+[
+    {
+        "NtCreateUserProcess": {
+            "success": true,
+            "before": {
+                "image_path": "C:\\Windows\\System32\\whoami.exe",
+                "command_line": "whoami.exe"
+            },
+            "after": {
+                "proc_id": 5678
+            }
+        }
+    },
+    {
+        "NtCreateKey": {
+            "success": true,
+            "before": {
+                "key_path": "HKCU\\Software\\Malicious"
+            }
+        }
+    }
+]
+```
+
+<ResponseField name="empty" type="boolean">
+  Present in some cases to indicate if the process data is empty
+</ResponseField>
+
+Each array element represents a single API call with the following structure:
+
+### API Call Object
+
+<ResponseField name="{FunctionName}" type="object">
+  The Windows API function name (e.g., `NtCreateUserProcess`, `NtCreateKey`)
+  
+  <ResponseField name="success" type="boolean" required>
+    Indicates whether the API call completed successfully
+  </ResponseField>
+  
+  <ResponseField name="before" type="object">
+    Parameters and state before the API call execution. Fields vary by function.
+  </ResponseField>
+  
+  <ResponseField name="after" type="object">
+    Results and state after the API call execution. Fields vary by function.
+  </ResponseField>
+</ResponseField>
+
+## Static Analysis ({sha256}.json)
+
+Contains PE file information and static analysis results.
+
+```json
+{
+    "generic": {
+        "is_x86": true,
+        "is_dll": false,
+        "machine_type": "x86"
+    }
+}
+```
+
+<ResponseField name="generic" type="object" required>
+  Generic PE file information
+  
+  <ResponseField name="is_x86" type="boolean">
+    Indicates if the file is a 32-bit (x86) executable
+  </ResponseField>
+  
+  <ResponseField name="is_dll" type="boolean">
+    Indicates if the file is a DLL
+  </ResponseField>
+  
+  <ResponseField name="machine_type" type="string">
+    CPU architecture (e.g., "x86", "x64")
+  </ResponseField>
+</ResponseField>
+
+## Common API Functions
+
+These are the most frequently encountered Windows API calls in dynamic analysis:
+
+### NtCreateUserProcess
+
+Process creation and execution.
+
+<ResponseField name="before.image_path" type="string">
+  Path to the executable being launched
+</ResponseField>
+
+<ResponseField name="before.command_line" type="string">
+  Command line arguments
+</ResponseField>
+
+<ResponseField name="after.proc_id" type="integer">
+  Process ID of the newly created process. Use with `utils.get_json_pid()` (Lua) or to construct the path to the process's JSON file (Python).
+</ResponseField>
+
+**Example:**
+```json
+{
+    "NtCreateUserProcess": {
+        "success": true,
+        "before": {
+            "image_path": "C:\\Windows\\System32\\cmd.exe",
+            "command_line": "cmd.exe /c whoami"
+        },
+        "after": {
+            "proc_id": 2468
+        }
+    }
+}
+```
+
+### NtCreateKey
+
+Registry key creation.
+
+<ResponseField name="before.key_path" type="string">
+  Full registry key path being created
+</ResponseField>
+
+**Example:**
+```json
+{
+    "NtCreateKey": {
+        "success": true,
+        "before": {
+            "key_path": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run"
+        }
+    }
+}
+```
+
+### NtSetValueKey
+
+Registry value modification.
+
+<ResponseField name="before.key_path" type="string">
+  Registry key path
+</ResponseField>
+
+<ResponseField name="before.value_name" type="string">
+  Name of the registry value
+</ResponseField>
+
+<ResponseField name="before.data" type="string">
+  Data being written to the registry value
+</ResponseField>
+
+### NtCreateFile
+
+File creation or opening.
+
+<ResponseField name="before.file_path" type="string">
+  Path to the file being created or opened
+</ResponseField>
+
+<ResponseField name="before.access_mask" type="integer">
+  Requested access rights
+</ResponseField>
+
+### NtWriteFile
+
+File write operation.
+
+<ResponseField name="before.file_handle" type="integer">
+  Handle to the file
+</ResponseField>
+
+<ResponseField name="before.buffer" type="string">
+  Data being written (may be truncated or encoded)
+</ResponseField>
+
+## Working with Child Processes
+
+When a process creates child processes, you can analyze them by:
+
+1. Finding `NtCreateUserProcess` calls with `success: true`
+2. Extracting the `after.proc_id` value
+3. Loading the corresponding `{proc_id}.json` file
+
+**Lua Example:**
+```lua
+if win_func.NtCreateUserProcess.success == true then
+    local target_PID = win_func.NtCreateUserProcess.after.proc_id
+    local child_json = utils.get_json_pid(report_directory, target_PID)
+    if not child_json.empty then
+        -- Analyze child process calls
+    end
+end
+```
+
+**Python Example:**
+```python
+if "NtCreateUserProcess" in win_func:
+    if win_func["NtCreateUserProcess"]["success"]:
+        child_pid = win_func["NtCreateUserProcess"]["after"]["proc_id"]
+        child_json_path = report_directory + b"\\" + str(child_pid).encode() + b".json"
+        child_data = dr_semu_utils.get_json_from_file(child_json_path)
+        # Analyze child process calls
+```
+
+## File Naming Convention
+
+- **Dynamic analysis**: `{pid}.json` where pid is the process ID (e.g., `1234.json`)
+- **Static analysis**: `{sha256}.json` where sha256 is the full SHA-256 hash (e.g., `abc123def456...789.json`)
+- **Starter metadata**: Always named `starter.json`
+
+## Best Practices
+
+1. **Check empty flag**: Always verify `empty` is `false` before processing data
+2. **Verify success**: Check the `success` field before accessing API call results
+3. **Handle missing fields**: Not all API calls include all fields; check for existence before accessing
+4. **Track process tree**: Use PIDs from `NtCreateUserProcess` to build a complete process execution tree
+5. **Combine static and dynamic**: Use both static PE information and dynamic behavior for accurate detection

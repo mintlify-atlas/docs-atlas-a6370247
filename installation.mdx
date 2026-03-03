@@ -1,0 +1,155 @@
+---
+title: Installation
+description: Install Dr.Semu and configure prerequisites for malware analysis
+---
+
+## Prerequisites
+
+Before installing Dr.Semu, ensure your system meets these requirements:
+
+<Warning>
+  Dr.Semu only supports **Windows 10 version 1809**. This is both the minimum and maximum supported version due to DynamoRIO compatibility constraints.
+</Warning>
+
+### Required software
+
+<Steps>
+  <Step title="Windows Projected File System">
+    Enable ProjFS using PowerShell in an elevated window:
+    
+    ```powershell
+    Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -NoRestart
+    ```
+    
+    <Note>
+      ProjFS provides the virtual filesystem that isolates malware from your actual filesystem.
+    </Note>
+  </Step>
+  
+  <Step title="Python 3 x64">
+    Install Python 3 64-bit from the [official Python downloads page](https://www.python.org/downloads/).
+    
+    Dr.Semu uses Python for executing detection rules after behavioral analysis completes.
+  </Step>
+  
+  <Step title="DynamoRIO">
+    Download DynamoRIO from the [official releases page](https://github.com/DynamoRIO/dynamorio/releases).
+    
+    <Warning>
+      Ensure you download a DynamoRIO version compatible with Windows 10 version 1809.
+    </Warning>
+  </Step>
+</Steps>
+
+## Installation from releases
+
+<Steps>
+  <Step title="Download Dr.Semu">
+    Download the latest release from the [Dr.Semu releases page](https://github.com/secrary/DrSemu/releases) and extract the zip file.
+  </Step>
+  
+  <Step title="Extract DynamoRIO">
+    Extract the DynamoRIO download into the Dr.Semu folder and rename the directory to `dynamorio`.
+    
+    Your directory structure should look like:
+    ```
+    DrSemu/
+    ├── dynamorio/
+    │   ├── bin32/
+    │   ├── bin64/
+    │   └── ...
+    ├── DrSemu.exe
+    └── ...
+    ```
+  </Step>
+  
+  <Step title="Verify installation">
+    Open a command prompt in the DrSemu directory and run:
+    
+    ```bash
+    DrSemu.exe --help
+    ```
+    
+    You should see the help output displaying available options.
+  </Step>
+</Steps>
+
+## Building from source
+
+If you prefer to build Dr.Semu from source:
+
+### Build prerequisites
+
+<Steps>
+  <Step title="Enable ProjFS">
+    ```powershell
+    Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -NoRestart
+    ```
+  </Step>
+  
+  <Step title="Install dependencies">
+    - Install [Python 3 x64](https://www.python.org/downloads/)
+    - Download DynamoRIO and extract to `bin` folder, rename to `dynamorio`
+  </Step>
+  
+  <Step title="Build pe-parse library">
+    Generate Visual Studio project from `DrSemu\shared_libs\pe_parse` using [cmake-gui](https://cmake.org/download/):
+    
+    1. Build 32-bit library under `build` (`\shared_libs\pe_parse\build\pe-parser-library\Release\`)
+    2. Build 64-bit library under `build64`
+    3. Change run-time library option to `Multi-threaded` (`/MT`)
+  </Step>
+  
+  <Step title="Build Dr.Semu">
+    1. Open the solution in Visual Studio
+    2. Set `LauncherCLI` as the StartUp Project
+    3. Build the solution
+  </Step>
+</Steps>
+
+## Configuration
+
+### Detection rules
+
+Dr.Semu includes a `dr_rules` directory for detection rules. You can:
+
+- Write custom rules in Python or Lua
+- Use community rules from [DrSemu-Detections](https://github.com/secrary/DrSemu-Detections)
+
+<Note>
+  Rules analyze both dynamic behavior (from JSON reports) and static file properties to determine if executables are malicious.
+</Note>
+
+### Directory structure
+
+After installation, your Dr.Semu directory should contain:
+
+```
+DrSemu/
+├── dynamorio/         # DynamoRIO installation
+├── dr_rules/          # Detection rules (Python/Lua)
+├── bin32/             # 32-bit Dr.Semu client DLL
+├── bin64/             # 64-bit Dr.Semu client DLL
+├── DrSemu.exe         # Main executable
+└── virtual_FS_REG.exe # Virtual FS/Registry handler
+```
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card
+    title="Quick start guide"
+    icon="rocket"
+    href="/quickstart"
+  >
+    Run your first malware analysis
+  </Card>
+  
+  <Card
+    title="Writing rules"
+    icon="code"
+    href="https://github.com/secrary/DrSemu-Detections"
+  >
+    Learn to create custom detection rules
+  </Card>
+</CardGroup>

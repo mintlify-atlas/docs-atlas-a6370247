@@ -1,0 +1,293 @@
+---
+title: Object System Calls
+description: Kernel object system calls monitored by Dr.Semu
+---
+
+Dr.Semu monitors kernel object operations to track synchronization primitives and named objects. Object names are virtualized to isolate different analysis sessions.
+
+## Mutex Operations
+
+### NtCreateMutant
+
+Creates a mutex object.
+
+<ParamField path="MutantHandle" type="PHANDLE">
+  Receives a handle to the mutex
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES" optional>
+  Object attributes including name
+</ParamField>
+
+<ParamField path="InitialOwner" type="BOOLEAN">
+  Whether the calling thread should own the mutex
+</ParamField>
+
+**Logged Information:**
+- Mutex name
+- Operation success status
+
+**Special Handling:**
+- Object names are virtualized to prevent conflicts between analysis sessions
+- If mutex already exists with original name (system mutex), passes through unchanged
+- Otherwise, name is redirected to virtualized namespace
+
+---
+
+### NtOpenMutant
+
+Opens an existing mutex object.
+
+<ParamField path="MutantHandle" type="PHANDLE">
+  Receives a handle to the mutex
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Object attributes identifying the mutex
+</ParamField>
+
+**Logged Information:**
+- Mutex name
+- Operation success status
+
+**Special Handling:**
+- Checks if mutex exists with original name first
+- If not found, redirects to virtualized name
+
+---
+
+## Semaphore Operations
+
+### NtCreateSemaphore
+
+Creates a semaphore object.
+
+<ParamField path="SemaphoreHandle" type="PHANDLE">
+  Receives a handle to the semaphore
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES" optional>
+  Object attributes including name
+</ParamField>
+
+<ParamField path="InitialCount" type="LONG">
+  Initial count for the semaphore
+</ParamField>
+
+<ParamField path="MaximumCount" type="LONG">
+  Maximum count for the semaphore
+</ParamField>
+
+**Logged Information:**
+- Semaphore name
+- Operation success status
+
+**Special Handling:**
+- Object names are virtualized
+- System semaphores (already existing) pass through unchanged
+
+---
+
+### NtOpenSemaphore
+
+Opens an existing semaphore object.
+
+<ParamField path="SemaphoreHandle" type="PHANDLE">
+  Receives a handle to the semaphore
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Object attributes identifying the semaphore
+</ParamField>
+
+**Logged Information:**
+- Semaphore name
+- Operation success status
+
+---
+
+## Event Operations
+
+### NtCreateEvent
+
+Creates an event object.
+
+<ParamField path="EventHandle" type="PHANDLE">
+  Receives a handle to the event
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES" optional>
+  Object attributes including name
+</ParamField>
+
+<ParamField path="EventType" type="EVENT_TYPE">
+  Type of event (NotificationEvent or SynchronizationEvent)
+</ParamField>
+
+<ParamField path="InitialState" type="BOOLEAN">
+  Initial state of the event (signaled or not)
+</ParamField>
+
+**Logged Information:**
+- Event name
+- Operation success status
+
+**Special Handling:**
+- Object names are virtualized
+- System events (already existing) pass through unchanged
+
+---
+
+### NtOpenEvent
+
+Opens an existing event object.
+
+<ParamField path="EventHandle" type="PHANDLE">
+  Receives a handle to the event
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Object attributes identifying the event
+</ParamField>
+
+**Logged Information:**
+- Event name
+- Operation success status
+
+---
+
+## Mailslot Operations
+
+### NtCreateMailslotFile
+
+Creates a mailslot.
+
+<ParamField path="FileHandle" type="PHANDLE">
+  Receives a handle to the mailslot
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ULONG">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Object attributes including mailslot name
+</ParamField>
+
+<ParamField path="IoStatusBlock" type="PIO_STATUS_BLOCK">
+  Receives I/O status information
+</ParamField>
+
+<ParamField path="CreateOptions" type="ULONG">
+  Options for creating the mailslot
+</ParamField>
+
+<ParamField path="MailslotQuota" type="ULONG">
+  Maximum size of messages
+</ParamField>
+
+<ParamField path="MaximumMessageSize" type="ULONG">
+  Maximum size of a single message
+</ParamField>
+
+<ParamField path="ReadTimeout" type="PLARGE_INTEGER">
+  Read timeout for the mailslot
+</ParamField>
+
+**Logged Information:**
+- Mailslot name
+- Operation success status
+
+**Special Handling:**
+- Object names are virtualized
+
+---
+
+## Wait Operations
+
+### NtWaitForSingleObject
+
+Waits for an object to enter the signaled state.
+
+<ParamField path="Handle" type="HANDLE">
+  Handle to the object to wait on
+</ParamField>
+
+<ParamField path="Alertable" type="BOOLEAN">
+  Whether the wait is alertable
+</ParamField>
+
+<ParamField path="Timeout" type="PLARGE_INTEGER" optional>
+  Optional timeout value
+</ParamField>
+
+**Note:**
+Currently passes through without modification.
+
+---
+
+## Object Queries
+
+### NtQueryObject
+
+Retrieves information about an object.
+
+<ParamField path="Handle" type="HANDLE" optional>
+  Handle to the object
+</ParamField>
+
+<ParamField path="ObjectInformationClass" type="OBJECT_INFORMATION_CLASS">
+  Type of information to retrieve
+</ParamField>
+
+<ParamField path="ObjectInformation" type="PVOID" optional>
+  Buffer to receive the information
+</ParamField>
+
+<ParamField path="ObjectInformationLength" type="ULONG">
+  Size of the buffer
+</ParamField>
+
+<ParamField path="ReturnLength" type="PULONG" optional>
+  Receives the size of data returned
+</ParamField>
+
+**Special Handling:**
+- For ObjectNameInformation on file handles, virtual filesystem paths are converted back to original paths
+- Ensures analyzed binaries see expected file paths
+
+---
+
+## Object Virtualization
+
+All named kernel objects (mutexes, semaphores, events, mailslots) are virtualized by Dr.Semu:
+
+1. **Name Redirection**: Object names are prefixed with a session-specific identifier
+2. **System Object Preservation**: Objects that already exist with the original name (system objects) are not redirected
+3. **Session Isolation**: Different analysis sessions can create objects with the same names without conflicts
+
+This allows multiple instances of Dr.Semu to run simultaneously without interference while preserving interaction with genuine system objects.

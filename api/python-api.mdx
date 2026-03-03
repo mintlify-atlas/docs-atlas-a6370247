@@ -1,0 +1,225 @@
+---
+title: 'Python Rule API'
+description: 'Complete reference for writing detection rules in Python'
+---
+
+## Overview
+
+The Python Rule API provides utilities for writing custom detection rules. Rules must implement a `check()` function that analyzes malware reports and returns a detection verdict.
+
+## Rule Structure
+
+Every Python rule must follow this structure:
+
+```python
+import dr_semu_utils
+
+def check(report_directory):
+    verdict = b"CLEAN"
+    
+    # Your detection logic here
+    
+    return verdict
+```
+
+### check Function
+
+<ParamField path="report_directory" type="bytes" required>
+  Path to the directory containing analysis report JSON files (as bytes)
+</ParamField>
+
+<ResponseField name="return" type="bytes">
+  Detection verdict as bytes. Return `b"CLEAN"` for benign files, or a malware family name (e.g., `b"Win32.EICAR.Dr"`) for detections
+</ResponseField>
+
+## dr_semu_utils Module
+
+The `dr_semu_utils` module provides helper functions for accessing report data.
+
+<Note>
+Don't forget to add module names to the `py_imports.config` file when using additional Python modules.
+</Note>
+
+### dr_semu_utils.get_starter_details
+
+Retrieves basic information about the starter process from `starter.json`.
+
+```python
+image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+```
+
+<ParamField path="report_directory" type="bytes" required>
+  Path to the report directory as bytes
+</ParamField>
+
+<ResponseField name="image_path" type="str">
+  Path to the executable that was analyzed
+</ResponseField>
+
+<ResponseField name="pid" type="int">
+  Process ID of the starter process
+</ResponseField>
+
+<ResponseField name="sha_256" type="str">
+  SHA-256 hash of the analyzed executable
+</ResponseField>
+
+**Return Value:** Returns a tuple `(image_path, pid, sha_256)`. All values are `None` if `starter.json` is missing or cannot be read.
+
+**Implementation Details:**
+- Reads `starter.json` from the report directory
+- Returns `(None, None, None)` if the file doesn't exist
+- Extracts `image_path`, `starter_pid`, and `sha_256` fields from the JSON
+
+### dr_semu_utils.get_json_from_file
+
+Reads and parses a JSON file.
+
+```python
+data = dr_semu_utils.get_json_from_file(file_path)
+```
+
+<ParamField path="file_path" type="bytes" required>
+  Full path to a JSON file as bytes
+</ParamField>
+
+<ResponseField name="return" type="dict">
+  Python dictionary containing the parsed JSON data, or `None` if the file doesn't exist
+</ResponseField>
+
+**Common Use Cases:**
+- Loading static analysis data: `report_directory + b"\\" + sha_256.encode() + b".json"`
+- Loading dynamic analysis data: `report_directory + b"\\" + str(pid).encode() + b".json"`
+
+## Example Rule
+
+This example detects the EICAR test file by checking for execution of `drsemu_eicar.exe`:
+
+```python
+import json
+import os
+import dr_semu_utils
+
+def check(report_directory):
+    
+    image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+    static_info = dr_semu_utils.get_json_from_file(report_directory + b"\\" + sha_256.encode() + b".json")
+    dynamic_info = dr_semu_utils.get_json_from_file(report_directory + b"\\" + str(pid).encode() + b".json")
+    
+    verdict = b"CLEAN"
+    
+    for win_func in dynamic_info:
+        if "NtCreateUserProcess" in win_func:
+            image_path = win_func["NtCreateUserProcess"]["before"]["image_path"]
+            if image_path.lower().endswith("drsemu_eicar.exe"):
+                return b"Win32.EICAR.Dr"
+    
+    return verdict
+```
+
+## Working with Report Files
+
+### Path Construction
+
+All paths use bytes and Windows-style backslashes:
+
+```python
+# Static analysis file
+static_path = report_directory + b"\\" + sha_256.encode() + b".json"
+
+# Dynamic analysis file for starter process
+dynamic_path = report_directory + b"\\" + str(pid).encode() + b".json"
+
+# Starter metadata file
+starter_path = report_directory + b"\\starter.json"
+```
+
+### Loading Analysis Data
+
+```python
+# Get starter details
+image_path, pid, sha_256 = dr_semu_utils.get_starter_details(report_directory)
+
+# Load static analysis
+static_info = dr_semu_utils.get_json_from_file(
+    report_directory + b"\\" + sha_256.encode() + b".json"
+)
+
+# Load dynamic analysis
+dynamic_info = dr_semu_utils.get_json_from_file(
+    report_directory + b"\\" + str(pid).encode() + b".json"
+)
+```
+
+## Dynamic Analysis Structure
+
+The dynamic analysis JSON is a list of API call dictionaries. Each call follows this structure:
+
+```python
+{
+    "FunctionName": {
+        "success": True,  # boolean indicating if the call succeeded
+        "before": {       # parameters before execution
+            # function-specific fields
+        },
+        "after": {        # results after execution
+            # function-specific fields
+        }
+    }
+}
+```
+
+### Iterating API Calls
+
+```python
+for win_func in dynamic_info:
+    if "NtCreateUserProcess" in win_func:
+        call_data = win_func["NtCreateUserProcess"]
+        if call_data["success"]:
+            image_path = call_data["before"]["image_path"]
+            proc_id = call_data["after"]["proc_id"]
+            # Process the call...
+```
+
+### Common API Calls
+
+**NtCreateUserProcess** - Process creation
+- `before["image_path"]`: Path to the executable
+- `after["proc_id"]`: PID of the created process
+- `success`: Whether the process was created successfully
+
+**NtCreateKey** - Registry key creation
+- `before["key_path"]`: Registry key path
+- `success`: Whether the key was created successfully
+
+## Static Analysis Structure
+
+The static analysis JSON contains PE file information:
+
+```python
+{
+    "generic": {
+        "is_x86": True,
+        # other generic PE information
+    },
+    # additional static analysis fields
+}
+```
+
+## Best Practices
+
+1. **Use bytes for paths**: All file paths must be bytes objects with the `b` prefix
+2. **Check for None**: Always verify that `get_starter_details()` and `get_json_from_file()` return valid data
+3. **Encode strings**: Convert strings to bytes using `.encode()` when building paths
+4. **Iterate all calls**: Loop through the entire dynamic_info list to check all API calls
+5. **Return bytes verdicts**: Always return bytes (e.g., `b"CLEAN"`, `b"Win32.Malware.Dr"`)
+6. **Check success flags**: Verify the `success` field before processing API call results
+7. **Update py_imports.config**: Add any additional Python modules to the configuration file
+
+## Differences from Lua API
+
+- Python uses bytes for paths and verdicts, Lua uses strings
+- Python uses dictionaries and lists, Lua uses tables
+- Python has separate functions for getting starter details vs loading JSON files
+- Python uses `in` operator for key checking, Lua checks for nil
+- Python uses `True`/`False`, Lua uses `true`/`false`

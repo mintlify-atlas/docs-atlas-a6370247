@@ -1,0 +1,571 @@
+---
+title: Frequently Asked Questions
+description: Common questions about Dr.Semu
+---
+
+## General Questions
+
+<AccordionGroup>
+  <Accordion title="What is Dr.Semu?">
+    Dr.Semu is a dynamic malware analysis tool that runs executables in an isolated environment, monitors their behavior, and detects if they are malicious based on configurable detection rules.
+
+    It combines:
+    - **Virtual filesystem** using Windows Projected File System (ProjFS)
+    - **Virtual registry** through registry redirection
+    - **Dynamic instrumentation** via DynamoRIO
+    - **Behavior-based detection** using Python or Lua rules
+  </Accordion>
+
+  <Accordion title="Is Dr.Semu production-ready?">
+    No. Dr.Semu is in early development stage and should be used for:
+    - Research and learning
+    - Experimentation
+    - Academic projects
+
+    It is **not recommended** for:
+    - Production malware analysis
+    - Critical security infrastructure
+    - Enterprise deployments
+  </Accordion>
+
+  <Accordion title="What makes Dr.Semu different from other sandboxes?">
+    Dr.Semu's unique features:
+
+    1. **User-mode isolation:** Everything happens from user-mode without kernel drivers
+    2. **ProjFS virtualization:** Uses Windows Projected File System for filesystem isolation
+    3. **DynamoRIO instrumentation:** Intercepts system calls without hooking
+    4. **Community rules:** Detection rules written in Python or Lua
+    5. **Open source:** Full source code available for customization
+  </Accordion>
+
+  <Accordion title="What Windows versions does Dr.Semu support?">
+    Dr.Semu requires **exactly Windows 10 version 1809**.
+
+    **Why this specific version?**
+    - **Minimum:** Version 1809 introduced ProjFS support
+    - **Maximum:** DynamoRIO supports Windows 10 up to version 1809
+
+    See the [Limitations](/troubleshooting/limitations#operating-system-limitations) page for details.
+  </Accordion>
+</AccordionGroup>
+
+## Installation and Setup
+
+<AccordionGroup>
+  <Accordion title="How do I install Dr.Semu?">
+    Follow these steps:
+
+    1. **Enable ProjFS** (run as administrator):
+       ```powershell
+       Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -NoRestart
+       ```
+
+    2. **Download Dr.Semu** from the [releases page](https://github.com/secrary/DrSemu/releases)
+
+    3. **Download DynamoRIO:**
+       - Get it from [DynamoRIO releases](https://github.com/DynamoRIO/dynamorio/releases)
+       - Extract into the DrSemu folder
+       - Rename to `dynamorio`
+
+    4. **Install Python 3 x64** from [python.org](https://www.python.org/downloads/)
+
+    5. **Download detection rules** from [DrSemu-Detections](https://github.com/secrary/DrSemu-Detections)
+
+    6. **Restart your system** to complete ProjFS setup
+  </Accordion>
+
+  <Accordion title="Do I need administrator privileges?">
+    Yes. Dr.Semu requires administrator privileges for:
+
+    - Enabling ProjFS
+    - Creating virtual registry hives
+    - Starting virtualization instances
+    - Registry save/load operations
+    - Process monitoring and instrumentation
+
+    Always run Dr.Semu from an elevated command prompt or PowerShell.
+  </Accordion>
+
+  <Accordion title="Can I build Dr.Semu from source?">
+    Yes. To build from source:
+
+    1. Enable ProjFS (as above)
+    2. Install Python 3 x64
+    3. Download and extract DynamoRIO into the `bin` folder, rename to `dynamorio`
+    4. Build the [pe-parser-library](https://github.com/trailofbits/pe-parse):
+       - Generate VS project from `DrSemu\shared_libs\pe_parse` using cmake-gui
+       - Build 32-bit under `build` and 64-bit under `build64`
+       - Change runtime library to Multi-threaded (`/MT`)
+    5. Set `LauncherCLI` as StartUp Project in Visual Studio
+    6. Build the solution
+
+    See the [Build Guide](/getting-started/building) for detailed instructions.
+  </Accordion>
+
+  <Accordion title="What dependencies does Dr.Semu have?">
+    **Required:**
+    - Windows 10 version 1809
+    - Windows Projected File System (ProjFS)
+    - DynamoRIO (runtime)
+    - Python 3 x64 (for detection rules)
+
+    **Optional:**
+    - Lua runtime (for Lua-based detection rules)
+
+    **Build-time only:**
+    - Visual Studio (for building from source)
+    - CMake (for building dependencies)
+    - pe-parse library
+  </Accordion>
+</AccordionGroup>
+
+## Usage
+
+<AccordionGroup>
+  <Accordion title="How do I analyze a file?">
+    Basic usage:
+
+    ```bash
+    DrSemu.exe --target C:\path\to\sample.exe
+    ```
+
+    Analyze a directory of files:
+
+    ```bash
+    DrSemu.exe --target C:\path\to\directory
+    ```
+
+    With custom timeout:
+
+    ```bash
+    DrSemu.exe --target sample.exe --time_limit 300
+    ```
+
+    With command-line arguments for the target:
+
+    ```bash
+    DrSemu.exe --target sample.exe --cmd_line "arg1 arg2"
+    ```
+  </Accordion>
+
+  <Accordion title="What file types can Dr.Semu analyze?">
+    Dr.Semu analyzes **Windows PE executables only**:
+
+    - `.exe` files (both 32-bit and 64-bit)
+
+    **Not supported:**
+    - DLL files (cannot be executed directly)
+    - Scripts (PowerShell, VBScript, etc.)
+    - Documents with macros
+    - Non-PE formats
+    - ARM executables
+
+    For DLL analysis, you need a loader executable.
+  </Accordion>
+
+  <Accordion title="How long does analysis take?">
+    **Default:** 120 seconds (2 minutes)
+
+    The analysis duration depends on:
+    - Time limit setting (`--time_limit` parameter)
+    - Sample behavior (may exit earlier)
+    - System performance
+    - Instrumentation overhead (2-10x slower than native)
+
+    You can adjust with `--time_limit`:
+    ```bash
+    DrSemu.exe --target sample.exe --time_limit 300  # 5 minutes
+    ```
+
+    Set to `0` to disable timeout (not recommended).
+  </Accordion>
+
+  <Accordion title="Where are the analysis results?">
+    Dr.Semu generates JSON reports in a temporary directory during analysis.
+
+    **Report structure:**
+    - `starter.json` - Initial process information (PID, hash, etc.)
+    - `<pid>.json` - Behavior report for each process
+
+    **Important:** Reports are deleted after analysis completes. The detection verdict is displayed in a message box.
+
+    To preserve reports, modify the code to skip the cleanup:
+    ```cpp
+    // Comment out this line in LauncherCLI.cpp:473
+    // fs::remove_all(report_directory, error_code);
+    ```
+  </Accordion>
+
+  <Accordion title="Can I analyze multiple files at once?">
+    Yes. Point Dr.Semu to a directory:
+
+    ```bash
+    DrSemu.exe --target C:\malware_samples\
+    ```
+
+    Dr.Semu will:
+    - Find all `.exe` files in the directory
+    - Create a separate VM instance for each file
+    - Analyze them concurrently in parallel threads
+    - Display results for each sample
+
+    Each sample gets its own:
+    - Virtual filesystem
+    - Virtual registry
+    - Isolated environment
+    - VM index (dr_semu_1, dr_semu_2, etc.)
+  </Accordion>
+</AccordionGroup>
+
+## Detection Rules
+
+<AccordionGroup>
+  <Accordion title="How do detection rules work?">
+    Detection rules analyze the behavior captured in JSON reports:
+
+    1. Dr.Semu monitors the sample and generates JSON reports
+    2. `run_detections.exe` loads rules from the `dr_rules` directory
+    3. Each rule receives:
+       - Dynamic behavior data (from JSON reports)
+       - Static information (PE headers, hash, etc.)
+    4. Rules return detection results (malicious/benign)
+    5. Dr.Semu displays the final verdict
+
+    Rules can be written in:
+    - **Python** - Full access to Python libraries
+    - **Lua** - Lightweight scripting
+  </Accordion>
+
+  <Accordion title="Where do I get detection rules?">
+    **Official repository:**
+    [DrSemu-Detections](https://github.com/secrary/DrSemu-Detections)
+
+    **Create your own:**
+    - Python example: [Python rule gist](https://gist.github.com/secrary/ac89321b8a7bde998a6e3139be49eb72)
+    - Lua example: [Lua rule gist](https://gist.github.com/secrary/e16daf698d466136229dc417d7dbcfa3)
+
+    Place rules in the `dr_rules` directory.
+  </Accordion>
+
+  <Accordion title="How do I write a custom detection rule?">
+    **Python example:**
+
+    ```python
+    def check(data, static_data):
+        # data contains dynamic behavior from JSON
+        # static_data contains PE info, hashes, etc.
+        
+        # Check for suspicious behavior
+        if 'registry' in data:
+            for reg_op in data['registry']:
+                if 'Run' in reg_op.get('key', ''):
+                    return {'detected': True, 'reason': 'Persistence mechanism'}
+        
+        return {'detected': False}
+    ```
+
+    **Lua example:**
+
+    ```lua
+    function check(data, static_data)
+        -- Analyze behavior
+        if data.filesystem then
+            for _, file_op in ipairs(data.filesystem) do
+                if file_op.path:match("%.exe$") then
+                    return {detected = true, reason = "Drops executable"}
+                end
+            end
+        end
+        return {detected = false}
+    end
+    ```
+
+    See [Writing Detection Rules](/guides/writing-rules) for more details.
+  </Accordion>
+
+  <Accordion title="Can I disable detection rules?">
+    Yes. Detection rules are optional:
+
+    - Remove rules from the `dr_rules` directory to disable them
+    - Keep the directory empty to skip detection
+    - Dr.Semu will still generate behavior reports
+
+    The analysis and monitoring happens regardless of detection rules. Rules only affect the final verdict.
+  </Accordion>
+</AccordionGroup>
+
+## Troubleshooting
+
+<AccordionGroup>
+  <Accordion title="Why does Dr.Semu fail to start?">
+    Common causes:
+
+    1. **ProjFS not enabled:**
+       ```powershell
+       Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -NoRestart
+       ```
+
+    2. **Not running as administrator:**
+       - Right-click command prompt
+       - Select "Run as administrator"
+
+    3. **Missing DynamoRIO:**
+       - Download from [DynamoRIO releases](https://github.com/DynamoRIO/dynamorio/releases)
+       - Extract to `dynamorio` folder
+
+    4. **Wrong Windows version:**
+       - Check: `winver`
+       - Must be Windows 10 version 1809
+
+    See [Common Issues](/troubleshooting/common-issues) for more solutions.
+  </Accordion>
+
+  <Accordion title="What does 'Failed to start virtualization instance' mean?">
+    This error indicates ProjFS initialization failed.
+
+    **Solutions:**
+
+    1. Verify ProjFS is enabled:
+       ```powershell
+       Get-WindowsOptionalFeature -Online -FeatureName Client-ProjFS
+       ```
+       Should show `State: Enabled`
+
+    2. Restart after enabling ProjFS
+
+    3. Run as administrator
+
+    4. Check temp directory permissions
+
+    5. Ensure no other ProjFS instances are using the same path
+
+    See: `virtual_FS_REG.cpp:168`
+  </Accordion>
+
+  <Accordion title="Why are processes terminating immediately?">
+    Possible reasons:
+
+    1. **Sample is crashing:**
+       - Check if the sample runs normally without Dr.Semu
+       - Sample may detect the analysis environment
+
+    2. **Missing dependencies:**
+       - The executable may require DLLs not present in the virtual environment
+       - Try placing dependencies in the same directory
+
+    3. **Anti-analysis techniques:**
+       - Sample may detect DynamoRIO
+       - Sample may check for timing anomalies
+       - Sample may detect virtual environment
+
+    4. **Architecture mismatch:**
+       - Verify both 32-bit and 64-bit DynamoRIO are present
+
+    See [Limitations](/troubleshooting/limitations#anti-analysis-detection) for more information.
+  </Accordion>
+
+  <Accordion title="Can I analyze samples on Windows 11?">
+    **Not officially supported.**
+
+    Dr.Semu is designed for Windows 10 version 1809. Windows 11 compatibility issues:
+
+    - DynamoRIO may not support Windows 11 system calls
+    - Instrumentation may fail or produce incorrect results
+    - Behavior monitoring may be incomplete
+    - System instability is possible
+
+    **Recommendation:** Use a Windows 10 version 1809 VM for analysis.
+
+    See [Limitations](/troubleshooting/limitations#maximum-version-windows-10-version-1809) for details.
+  </Accordion>
+
+  <Accordion title="How do I view detailed logs?">
+    Dr.Semu uses spdlog for logging. Logs include:
+
+    - Console output (if Dr.Semu is run from command line)
+    - Process tracking information
+    - Virtualization status
+    - Errors and warnings
+
+    For debug builds, additional logging is available:
+    - DynamoRIO debug output
+    - Detailed system call tracing
+    - Virtual filesystem operations
+
+    To enable verbose output, rebuild in Debug mode and check the console.
+  </Accordion>
+</AccordionGroup>
+
+## Advanced Topics
+
+<AccordionGroup>
+  <Accordion title="How does the isolation mechanism work?">
+    Dr.Semu uses multiple isolation techniques:
+
+    **Filesystem (ProjFS):**
+    - Creates a virtual filesystem layer
+    - Redirects file operations to virtual paths
+    - Provides on-demand file population from the real filesystem
+    - All changes stay in the virtual environment
+
+    **Registry:**
+    - Saves registry hives to files
+    - Loads them under virtual keys (HKLM\\dr_semu_*)
+    - Redirects registry operations to virtual hives
+    - Unloads and deletes after analysis
+
+    **Process:**
+    - Tracks all spawned processes
+    - Instruments child processes with DynamoRIO
+    - Monitors process creation/termination
+    - Uses fake explorer.exe as parent
+
+    See: `README.md:13-17`
+  </Accordion>
+
+  <Accordion title="What system calls does Dr.Semu monitor?">
+    Dr.Semu monitors Windows Native API (Nt* functions):
+
+    **Filesystem:** NtCreateFile, NtWriteFile, NtOpenFile, NtDeleteFile, NtCreateSection, NtQueryDirectoryFile, etc.
+
+    **Registry:** NtOpenKey, NtCreateKey, NtSetValueKey, NtDeleteKey, NtEnumerateKey, etc.
+
+    **Process/Thread:** NtCreateUserProcess, NtOpenProcess, NtWriteVirtualMemory, NtProtectVirtualMemory, etc.
+
+    **Objects:** NtCreateMutant, NtCreateEvent, NtWaitForSingleObject, etc.
+
+    **System:** NtQuerySystemInformation, NtLoadDriver, NtRaiseHardError, etc.
+
+    **API Hooks:** CoCreateInstance, URLDownloadToFile, WSAStartup, etc.
+
+    See: `DrSemu.cpp:414-741` for complete list
+  </Accordion>
+
+  <Accordion title="Can malware detect Dr.Semu?">
+    Yes. Sophisticated malware can detect Dr.Semu through:
+
+    **DynamoRIO artifacts:**
+    - drrun.exe process
+    - Injected DLLs
+    - Memory patterns
+    - Execution timing
+
+    **Virtual environment:**
+    - Registry keys with dr_semu_ prefix
+    - Virtual filesystem paths
+    - Fake explorer.exe process
+
+    **Behavioral indicators:**
+    - Slow execution (2-10x overhead)
+    - Timing inconsistencies
+    - Missing hardware features
+
+    This is a fundamental limitation of user-mode dynamic analysis. See [Limitations](/troubleshooting/limitations#anti-analysis-detection).
+  </Accordion>
+
+  <Accordion title="How can I extend Dr.Semu?">
+    Dr.Semu is open source and can be extended:
+
+    **Add system call monitoring:**
+    1. Add syscall name to the appropriate handler file
+    2. Implement pre/post handler functions
+    3. Register in the event_pre_syscall function
+
+    **Add API hooks:**
+    1. Use drwrap to hook functions
+    2. Add pre/post callbacks
+    3. Register in module_load_event
+
+    **Create detection rules:**
+    - Write Python or Lua scripts
+    - Place in dr_rules directory
+    - Access JSON behavior data
+
+    **Add language support:**
+    - Modify run_detections.cpp
+    - Add interpreter initialization
+    - Implement rule loading
+
+    **Improve isolation:**
+    - Enhance filesystem provider
+    - Add registry redirection rules
+    - Implement object namespace isolation
+  </Accordion>
+
+  <Accordion title="What are the performance characteristics?">
+    **Execution overhead:** 2-10x slower than native execution
+    - Depends on instrumentation density
+    - I/O heavy operations are slower
+    - CPU-intensive operations have less overhead
+
+    **Memory usage:**
+    - DynamoRIO overhead: ~10-50 MB per process
+    - Virtual filesystem: depends on accessed files
+    - Virtual registry: ~100-500 MB (full registry clone)
+
+    **Disk usage:**
+    - Temporary virtual filesystem: varies by sample behavior
+    - Registry hives: ~100-500 MB per VM instance
+    - JSON reports: ~1-10 MB per process
+
+    **Concurrent analysis:**
+    - Multiple samples analyzed in parallel threads
+    - Each gets separate VM instance
+    - Limited by system resources
+
+    See: [Limitations](/troubleshooting/limitations#performance-impact)
+  </Accordion>
+</AccordionGroup>
+
+## Contributing
+
+<AccordionGroup>
+  <Accordion title="Can I contribute to Dr.Semu?">
+    Yes! Dr.Semu is open source:
+
+    **Main repository:**
+    [https://github.com/secrary/DrSemu](https://github.com/secrary/DrSemu)
+
+    **Detection rules:**
+    [https://github.com/secrary/DrSemu-Detections](https://github.com/secrary/DrSemu-Detections)
+
+    Contributions welcome:
+    - Bug fixes
+    - Feature enhancements
+    - Detection rules
+    - Documentation improvements
+    - Testing and issue reports
+  </Accordion>
+
+  <Accordion title="How do I report bugs?">
+    Report issues on GitHub:
+
+    [https://github.com/secrary/DrSemu/issues](https://github.com/secrary/DrSemu/issues)
+
+    Include:
+    - Windows version (should be 1809)
+    - Dr.Semu version
+    - Steps to reproduce
+    - Error messages
+    - Sample hash (if applicable)
+    - Log output
+
+    **Do not upload actual malware samples to GitHub.**
+  </Accordion>
+
+  <Accordion title="Where can I get help?">
+    **GitHub Issues:**
+    [https://github.com/secrary/DrSemu/issues](https://github.com/secrary/DrSemu/issues)
+
+    **Author:**
+    [@_qaz_qaz](https://twitter.com/_qaz_qaz) on Twitter
+
+    **Resources:**
+    - README.md in the repository
+    - Source code comments
+    - Example detection rules
+    - This documentation
+
+    Note: Dr.Semu is a research project. Response times may vary and no official support is provided.
+  </Accordion>
+</AccordionGroup>

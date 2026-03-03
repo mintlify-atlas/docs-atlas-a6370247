@@ -1,0 +1,321 @@
+---
+title: Isolation
+description: How Dr.Semu isolates malware execution without kernel drivers
+---
+
+Dr.Semu achieves complete user-mode isolation through two primary mechanisms: Windows Projected File System (ProjFS) for filesystem virtualization and registry hive cloning for registry isolation. No kernel drivers or hooks are required.
+
+## Isolation philosophy
+
+<Info>
+Everything happens from user-mode. Dr.Semu provides strong isolation guarantees without modifying the Windows kernel.
+</Info>
+
+Traditional sandboxing approaches often require:
+- Kernel drivers for filesystem filtering
+- SSDT hooks for system call interception  
+- Hypervisor-based isolation
+
+Dr.Semu takes a different approach by leveraging Windows 10's built-in capabilities:
+
+1. **ProjFS** - Native Windows API for filesystem virtualization (introduced in Windows 10 1809)
+2. **Registry APIs** - Standard Windows registry functions for hive cloning
+3. **DynamoRIO** - User-mode dynamic instrumentation framework
+
+## Filesystem isolation
+
+### Windows Projected File System
+
+Dr.Semu uses ProjFS to provide a virtual filesystem that appears real to the malware but is completely isolated.
+
+**How it works** (from README.md:13-15):
+
+> Windows Projected File System [(ProjFS)](https://docs.microsoft.com/en-us/windows/win32/projfs/projected-file-system) is used to provide a `virtual` file system.
+
+### Implementation
+
+The virtual filesystem is implemented in `virtual_FS_REG/virtualizationInstance.cpp` and `virtual_FS_REG/fs_provider.cpp`.
+
+**Key components**:
+
+1. **Virtualization instance** - Manages ProjFS session
+2. **Provider callbacks** - Handles file enumeration and data requests
+3. **Path translation** - Converts virtual paths to host paths
+
+### Virtual root structure
+
+Each analysis session gets a unique virtual root:
+
+```
+%TEMP%\dr_semu_{vm_index}\
+```
+
+For example:
+```
+C:\Users\User\AppData\Local\Temp\dr_semu_0\
+C:\Users\User\AppData\Local\Temp\dr_semu_1\
+```
+
+This allows multiple samples to run concurrently without interference.
+
+### ProjFS callbacks
+
+Dr.Semu implements several ProjFS callbacks:
+
+<Tabs>
+  <Tab title="Directory enumeration">
+    ```cpp
+    // Intercepts directory listing operations
+    PRJ_START_DIRECTORY_ENUMERATION_CB
+    PRJ_GET_DIRECTORY_ENUMERATION_CB
+    PRJ_END_DIRECTORY_ENUMERATION_CB
+    ```
+    
+    When malware calls `FindFirstFile` or `NtQueryDirectoryFile`, ProjFS invokes these callbacks to provide directory contents.
+  </Tab>
+  
+  <Tab title="File access">
+    ```cpp
+    // Handles file metadata and content requests
+    PRJ_GET_PLACEHOLDER_INFO_CB
+    PRJ_GET_FILE_DATA_CB
+    ```
+    
+    When malware opens or reads a file, ProjFS materializes the virtual file by copying data from the host filesystem.
+  </Tab>
+</Tabs>
+
+### Path redirection
+
+All filesystem operations are transparently redirected:
+
+**Real path (malware's view)**:
+```
+C:\Windows\System32\notepad.exe
+```
+
+**Virtual path (actual location)**:
+```
+C:\Users\User\AppData\Local\Temp\dr_semu_0\Windows\System32\notepad.exe
+```
+
+The malware never knows it's not accessing the real filesystem.
+
+### Isolation enforcement
+
+Dr.Semu blocks access to its own components to prevent sandbox detection:
+
+```cpp
+// Block access to paths containing "\dr_semu_"
+if (path.find(L"\\dr_semu_") != std::wstring::npos) {
+    // Deny access
+}
+```
+
+This prevents malware from:
+- Detecting the virtual environment
+- Accessing other concurrent VM instances
+- Tampering with Dr.Semu's components
+
+## Registry isolation
+
+### Registry hive cloning
+
+Registry isolation is achieved by cloning all registry hives to a separate location with a VM-specific prefix (from README.md:15):
+
+> For Registry redirection, it clones all Registry hives to a new location and redirects all Registry accesses.
+
+### Implementation
+
+Registry virtualization is implemented in `virtual_FS_REG/virtual_reg.cpp`.
+
+**Process** (simplified):
+
+<Steps>
+  <Step title="Enumerate hives">
+    Discover all existing registry hives:
+    - HKEY_LOCAL_MACHINE
+    - HKEY_USERS
+    - HKEY_CURRENT_USER (linked to user SID under HKU)
+  </Step>
+  
+  <Step title="Save hives">
+    Export each hive to a temporary file using `RegSaveKey`.
+  </Step>
+  
+  <Step title="Load with prefix">
+    Load the saved hives under a VM-specific prefix like `dr_semu_0!HKLM`.
+  </Step>
+  
+  <Step title="Redirect accesses">
+    Rewrite registry paths in system call handlers to point to the prefixed hives.
+  </Step>
+</Steps>
+
+### Virtual registry structure
+
+Original registry path:
+```
+HKEY_LOCAL_MACHINE\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+```
+
+Virtual registry path:
+```
+dr_semu_0!HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Run
+```
+
+### Path rewriting
+
+The DynamoRIO client intercepts registry system calls and rewrites paths:
+
+```cpp
+// Pseudo-code from registry_handlers.hpp
+UNICODE_STRING* key_path = get_registry_path(drcontext);
+std::wstring path(key_path->Buffer, key_path->Length / sizeof(wchar_t));
+
+// Rewrite to virtual path
+std::wstring virtual_path = L"dr_semu_" + std::to_wstring(vm_index) + L"!" + path;
+```
+
+### Supported operations
+
+All registry operations are virtualized:
+
+- **Read operations**: `NtQueryValueKey`, `NtEnumerateKey`, `NtQueryKey`
+- **Write operations**: `NtSetValueKey`, `NtCreateKey`, `NtDeleteKey`
+- **Transacted operations**: `NtCreateKeyTransacted`, `NtOpenKeyTransacted`
+
+See the [Registry API reference](/api/registry) for the complete list of monitored calls.
+
+## Process and object isolation
+
+### Process tracking
+
+Dr.Semu maintains a whitelist of allowed processes:
+
+```cpp
+// DrSemu.cpp:259-262
+const auto current_proc_id = dr_get_process_id();
+dr_semu::shared_variables::allowed_target_processes.insert(current_proc_id);
+const auto parent_proc_id = get_parent_id();
+dr_semu::shared_variables::allowed_target_processes.insert(parent_proc_id);
+```
+
+### Child process injection
+
+When malware creates a child process, Dr.Semu automatically instruments it:
+
+```cpp
+// Event: NtCreateUserProcess
+// Post-handler ensures child is monitored
+dr_semu::process::handlers::NtCreateUserProcess_post_handler(drcontext);
+```
+
+Child processes inherit:
+- DynamoRIO instrumentation
+- Virtual filesystem access
+- Registry redirection
+- Same VM context
+
+### Object namespace isolation
+
+Kernel objects (mutexes, events, semaphores) are not isolated by name. Malware can still:
+- Create named objects visible system-wide
+- Detect other Dr.Semu instances via object names
+
+<Warning>
+Object namespace isolation is limited. Consider this when running concurrent analyses of the same malware family.
+</Warning>
+
+## Network isolation (optional)
+
+Dr.Semu can optionally block internet access:
+
+```cpp
+// DrSemu.cpp:148
+dr_semu::networking::config::disable_internet = false;
+```
+
+When enabled, network operations are:
+- Logged but not executed
+- Return synthetic error codes
+- Captured in behavior reports
+
+This prevents:
+- Command & control communication
+- Credential exfiltration during analysis
+- Payload downloads
+
+<Note>
+Network isolation is currently disabled by default. You must modify the source code to enable it.
+</Note>
+
+## Isolation limitations
+
+### Known issues
+
+From the README.md TODO section:
+
+> - Solve isolation related issues
+
+Current limitations:
+
+1. **Process enumeration** - Malware can enumerate system processes outside the sandbox
+2. **Window enumeration** - Malware can detect real windows and applications
+3. **Hardware fingerprinting** - CPU, disk, and memory information reflects the host
+4. **Timing attacks** - DynamoRIO overhead may be detectable
+5. **Object namespace** - Named objects are not isolated
+
+### Anti-analysis detection
+
+Sophisticated malware may detect Dr.Semu through:
+
+- Process name checks (looking for "drrun.exe")
+- DynamoRIO artifact detection (code cache, shadow stack)
+- Performance degradation from instrumentation
+- Absence of real user activity (mouse, keyboard)
+
+### Synchronization issues
+
+From LauncherCLI.cpp:398-405:
+
+```cpp
+/*
+ISSUE: if a parent process calls remove_current_process before a child process(es) 
+finish dr_client_main execution and call add_current_process
+SOLUTION: sleep 5 secs
+*/
+if (dr_semu::shared_variables::are_children) {
+    dr_sleep(2 SECONDS);
+}
+```
+
+Race conditions can occur with rapid process creation/termination.
+
+## Comparison with other approaches
+
+| Approach | Isolation strength | Performance | Complexity | Limitations |
+|----------|-------------------|-------------|------------|-------------|
+| **Dr.Semu** | Strong | Moderate (2-10x overhead) | Low (user-mode only) | Windows 10 1809 only |
+| **Kernel drivers** | Very strong | Low overhead | High (kernel dev) | Requires signed driver |
+| **Hypervisor** | Strongest | High overhead | Very high | Resource intensive |
+| **Cuckoo Sandbox** | Moderate | Low overhead | Moderate | Hooks detectable |
+
+Dr.Semu offers a unique balance of strong isolation without kernel components.
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Virtual filesystem" icon="folder-tree" href="/advanced/virtual-filesystem">
+    Deep dive into ProjFS implementation
+  </Card>
+  <Card title="Registry redirection" icon="database" href="/advanced/registry-redirection">
+    Registry virtualization internals
+  </Card>
+  <Card title="Monitoring" icon="magnifying-glass" href="/concepts/monitoring">
+    System call interception
+  </Card>
+  <Card title="Limitations" icon="triangle-exclamation" href="/troubleshooting/limitations">
+    Known limitations and issues
+  </Card>
+</CardGroup>

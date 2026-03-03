@@ -1,0 +1,282 @@
+---
+title: Common Issues
+description: Common problems and solutions when using Dr.Semu
+---
+
+## Installation Issues
+
+### ProjFS Not Enabled
+
+**Error:** Dr.Semu fails to start with virtualization errors
+
+**Solution:**
+Enable Windows Projected File System in an elevated PowerShell window:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -NoRestart
+```
+
+Restart your system after enabling ProjFS.
+
+### DynamoRIO Not Found
+
+**Error:**
+```
+Failed to locate drrun.exe
+```
+
+See: `LauncherCLI.cpp:631`
+
+**Solution:**
+1. Download DynamoRIO from the [releases page](https://github.com/DynamoRIO/dynamorio/releases)
+2. Extract into the DrSemu folder
+3. Rename the extracted folder to `dynamorio`
+
+### Python Not Found
+
+**Error:** Detection rules fail to execute
+
+**Solution:**
+Install Python 3 x64 from [python.org](https://www.python.org/downloads/). Dr.Semu requires 64-bit Python for detection rule execution.
+
+## Execution Issues
+
+### Invalid File Extension
+
+**Error:**
+```
+Invalid file extension: <path>
+```
+
+See: `LauncherCLI.cpp:116`
+
+**Solution:**
+Dr.Semu only analyzes Windows executable files. Ensure your target file has a `.exe` extension.
+
+### Administrator Privileges Required
+
+**Error:**
+```
+SetCurrentDirectory() failed
+```
+
+See: `LauncherCLI.cpp:147`
+
+**Solution:**
+Run Dr.Semu with administrator privileges. Several operations require elevated permissions:
+- Enabling ProjFS
+- Creating virtual registry hives
+- Accessing system resources
+
+### File Not Found
+
+**Error:**
+```
+No such file/directory: <path>
+```
+
+See: `LauncherCLI.cpp:106`
+
+**Solution:**
+- Verify the file path is correct
+- Check that the file exists
+- Use absolute paths instead of relative paths
+- Ensure you have read permissions for the file
+
+## Virtual Environment Issues
+
+### Virtual FS/REG Initialization Failed
+
+**Error:**
+```
+virtual_fs_reg failed
+Failed to start virtualization instance
+```
+
+See: `LauncherCLI.cpp:244`, `virtual_FS_REG.cpp:168`
+
+**Solution:**
+1. Ensure ProjFS is enabled (see above)
+2. Run as administrator
+3. Check temp directory permissions
+4. Verify no other instances are running
+
+### Pipe Connection Failed
+
+**Error:**
+```
+Failed to make pipe connection
+Failed to connect pipe
+```
+
+See: `LauncherCLI.cpp:232`, `virtual_FS_REG.cpp:116`
+
+**Solution:**
+- Check that `virtual_FS_REG.exe` exists in the binaries directory
+- Verify Windows named pipes are working
+- Disable antivirus temporarily (may block pipe creation)
+- Ensure no firewall rules block local pipe communication
+
+### Registry Virtualization Failed
+
+**Error:**
+```
+Failed to create virtual Registry
+Failed to load a virtual Registry
+```
+
+See: `virtual_reg.cpp:110`, `virtual_reg.cpp:131`
+
+**Solution:**
+1. Run as administrator (required for registry operations)
+2. Ensure sufficient disk space in temp directory
+3. Check registry access permissions
+4. Close other registry monitoring tools
+
+## Detection Issues
+
+### Detection Rules Not Found
+
+**Error:**
+```
+failed to locate rules directory
+Failed to find run_detections
+```
+
+See: `run_detections.cpp:46`, `LauncherCLI.cpp:441`
+
+**Solution:**
+1. Download detection rules from [DrSemu-Detections](https://github.com/secrary/DrSemu-Detections)
+2. Place them in the `dr_rules` directory
+3. Verify the rules directory exists in the binaries location
+
+### Detection Execution Failed
+
+**Error:**
+```
+run_detections failed
+```
+
+See: `LauncherCLI.cpp:463`
+
+**Solution:**
+- Ensure Python 3 x64 is installed
+- Check that Lua runtime is available (for Lua rules)
+- Verify detection rule syntax is correct
+- Check the generated JSON reports exist
+
+## Architecture Issues
+
+### Wrong DynamoRIO Architecture
+
+**Error:**
+```
+Failed to locate DR client
+```
+
+See: `LauncherCLI.cpp:620`
+
+**Solution:**
+Dr.Semu automatically detects whether your target is 32-bit or 64-bit. Ensure both architectures of DynamoRIO are present:
+- `dynamorio/bin32/drrun.exe` for 32-bit executables
+- `dynamorio/bin64/drrun.exe` for 64-bit executables
+
+## Process Monitoring Issues
+
+### Process Timeout
+
+**Behavior:** Process terminates after 120 seconds by default
+
+See: `LauncherCLI.cpp:93`, `DrSemu.cpp:226-230`
+
+**Solution:**
+Use the `--time_limit` parameter to adjust the execution time:
+
+```bash
+DrSemu.exe --target sample.exe --time_limit 300
+```
+
+Set time limit in seconds. Use `0` to disable the timeout (not recommended for malware analysis).
+
+### Fake Explorer Process Failed
+
+**Error:**
+```
+Failed to locate a dumb explorer.exe
+Failed to execute fake Explorer under Dr.Semu
+```
+
+See: `LauncherCLI.cpp:272`, `LauncherCLI.cpp:305`
+
+**Solution:**
+1. Verify `explorer64.exe` exists in the binaries directory
+2. For 32-bit samples, ensure `explorer32.exe` is present
+3. Check file permissions
+
+## Cleanup Issues
+
+### Virtual Environment Not Cleaned Up
+
+**Issue:** Temporary directories remain after execution
+
+**Solution:**
+Manually delete temporary directories:
+1. Check your temp directory (usually `C:\Users\<username>\AppData\Local\Temp`)
+2. Look for directories named `dr_semu_*`
+3. Delete them manually if Dr.Semu didn't clean them up
+
+**Note:** This may happen if Dr.Semu crashes or is forcefully terminated.
+
+### Virtual Registry Hives Not Unloaded
+
+**Issue:** Registry hives remain loaded
+
+See: `virtual_reg.cpp:167`
+
+**Solution:**
+Manually unload registry hives using regedit or command line:
+
+```cmd
+reg unload HKLM\dr_semu_1!<key_name>
+reg unload HKEY_USERS\dr_semu_1!<key_name>
+```
+
+## General Troubleshooting Steps
+
+1. **Check Prerequisites:**
+   - Windows 10 version 1809
+   - ProjFS enabled
+   - DynamoRIO installed
+   - Python 3 x64 installed
+   - Administrator privileges
+
+2. **Verify File Structure:**
+   ```
+   DrSemu/
+   ├── DrSemu.exe
+   ├── virtual_FS_REG.exe
+   ├── run_detections.exe
+   ├── explorer64.exe
+   ├── explorer32.exe
+   ├── dynamorio/
+   │   ├── bin32/
+   │   └── bin64/
+   ├── bin32/
+   │   └── drsemu_x86.dll
+   ├── bin64/
+   │   └── drsemu_x64.dll
+   └── dr_rules/
+   ```
+
+3. **Enable Debug Output:**
+   - Check log files in the execution directory
+   - Look for JSON reports in the report directory
+
+4. **Check System Resources:**
+   - Ensure sufficient disk space
+   - Verify adequate RAM (malware analysis can be memory-intensive)
+   - Close other security tools that may interfere
+
+5. **Test with a Known Sample:**
+   - Try running a simple benign executable first
+   - Example: `DrSemu.exe --target C:\Windows\System32\notepad.exe`

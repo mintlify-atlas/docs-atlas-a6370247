@@ -1,0 +1,233 @@
+---
+title: Building from Source
+description: Complete guide to building Dr.Semu from source code
+---
+
+This guide walks you through building Dr.Semu from source on Windows. The build process requires Visual Studio and several dependencies.
+
+## Prerequisites
+
+### Required Software
+
+- **Visual Studio 2019 or later** with C++ development tools
+- **CMake** (version 3.10 or higher) - [Download cmake-gui](https://cmake.org/download/)
+- **Python 3 x64** - [Download Python 3](https://www.python.org/downloads/)
+- **Windows 10** version 1809 or later (required for ProjFS support)
+
+### Enable ProjFS
+
+Before building, enable Windows Projected File System using PowerShell in an elevated window:
+
+```powershell
+Enable-WindowsOptionalFeature -Online -FeatureName Client-ProjFS -NoRestart
+```
+
+This feature is essential for Dr.Semu's virtual filesystem implementation.
+
+## Building Dependencies
+
+### 1. Build pe-parse Library
+
+Dr.Semu requires the Trail of Bits pe-parse library for PE file analysis.
+
+**Generate Visual Studio Project:**
+
+1. Open cmake-gui
+2. Set source directory to: `DrSemu\shared_libs\pe_parse`
+3. Set build directory to: `DrSemu\shared_libs\pe_parse\build` (for 32-bit)
+4. Click "Configure" and select your Visual Studio version
+5. Click "Generate"
+
+**Build 32-bit Library:**
+
+1. Open the generated solution in `\shared_libs\pe_parse\build\`
+2. Build the `pe-parser-library` project in **Release** mode
+3. The output will be in `\shared_libs\pe_parse\build\pe-parser-library\Release\`
+
+**Build 64-bit Library:**
+
+1. Repeat the cmake-gui process with build directory: `DrSemu\shared_libs\pe_parse\build64`
+2. Generate the project
+3. Build in **Release** mode
+4. The output will be in `\shared_libs\pe_parse\build64\pe-parser-library\Release\`
+
+**Configure Runtime Library:**
+
+For both 32-bit and 64-bit builds:
+
+1. Right-click the `pe-parser-library` project
+2. Go to Properties → C/C++ → Code Generation
+3. Change **Runtime Library** to `/MT` (Multi-threaded)
+4. Rebuild the project
+
+This is crucial for proper linking with Dr.Semu.
+
+### 2. Download DynamoRIO
+
+1. Download the latest DynamoRIO release from [GitHub](https://github.com/DynamoRIO/dynamorio/releases)
+2. Extract the archive to `DrSemu\bin\dynamorio`
+
+The directory structure should be:
+```
+DrSemu/
+  bin/
+    dynamorio/
+      bin32/
+      bin64/
+      ...
+```
+
+## Building Dr.Semu
+
+### 1. Open Solution
+
+1. Open `DrSemu.sln` in Visual Studio
+2. The solution contains multiple projects:
+   - **DrSemu** - DynamoRIO client (core instrumentation)
+   - **virtual_FS_REG** - Virtual filesystem and registry provider
+   - **LauncherCLI** - Command-line launcher
+   - **fake_explorer** - Isolated process host
+   - **run_detections** - Detection engine
+
+### 2. Set Startup Project
+
+Right-click **LauncherCLI** and select "Set as StartUp Project"
+
+### 3. Build Configuration
+
+Select your build configuration:
+- **Release|x64** - For 64-bit executables (recommended)
+- **Release|x86** - For 32-bit executables
+
+### 4. Build Solution
+
+1. Build → Build Solution (Ctrl+Shift+B)
+2. Verify all projects build successfully
+3. Output binaries will be in `bin\` directory
+
+## Project Components
+
+### DrSemu (DynamoRIO Client)
+
+The core instrumentation client that hooks system calls:
+
+- **Location**: `DrSemu/DrSemu.cpp`
+- **Output**: `DrSemu.dll` (32-bit) and `DrSemu64.dll` (64-bit)
+- **Dependencies**: DynamoRIO SDK, pe-parse library
+
+Key features:
+- System call interception using DynamoRIO
+- Pre/post syscall handlers
+- JSON logging of behavior
+
+### virtual_FS_REG
+
+Provides virtual filesystem and registry redirection:
+
+- **Location**: `virtual_FS_REG/`
+- **Output**: Static library linked into LauncherCLI
+- **Dependencies**: Windows ProjFS API
+
+Implements:
+- ProjFS callbacks for file virtualization
+- Registry hive cloning and redirection
+
+### LauncherCLI
+
+Main executable that orchestrates analysis:
+
+- **Location**: `LauncherCLI/`
+- **Output**: `DrSemu.exe`
+- **Dependencies**: virtual_FS_REG, DynamoRIO
+
+## Common Build Issues
+
+### pe-parse Library Errors
+
+**Problem**: Linker errors about runtime library mismatch
+
+**Solution**: Ensure pe-parse is built with `/MT` runtime library option (see step 1 above)
+
+### ProjFS Not Available
+
+**Problem**: Compilation errors about missing ProjFS headers
+
+**Solution**: 
+- Verify Windows 10 version 1809 or later
+- Ensure ProjFS feature is enabled
+- Update Windows SDK to latest version
+
+### DynamoRIO Not Found
+
+**Problem**: Runtime error about missing DynamoRIO DLLs
+
+**Solution**: 
+- Verify DynamoRIO is extracted to `bin\dynamorio`
+- Check folder structure matches expectations
+
+### Missing Dependencies
+
+**Problem**: Compilation errors about missing headers
+
+**Solution**: The project uses git submodules for dependencies:
+```bash
+git submodule update --init --recursive
+```
+
+This downloads:
+- phnt (Process Hacker Native API headers)
+- nlohmann/json (JSON library)
+- spdlog (Logging library)
+- cxxopts (Command-line parsing)
+
+## Build Output
+
+After successful build, you'll have:
+
+```
+bin/
+  DrSemu.exe              # Main launcher
+  DrSemu.dll              # 32-bit DynamoRIO client
+  DrSemu64.dll            # 64-bit DynamoRIO client
+  explorer32.exe          # 32-bit fake explorer
+  explorer64.exe          # 64-bit fake explorer
+  dynamorio/              # DynamoRIO runtime
+    bin32/
+    bin64/
+```
+
+## Next Steps
+
+After building:
+
+1. Run Dr.Semu: `DrSemu.exe --target file_path`
+2. Review generated JSON reports
+3. Create custom detection rules in `dr_rules/`
+
+<Info>
+For development and debugging, you can define `DR_TESTING` in `virtual_FS_REG/shared_config.h` to disable certain features.
+</Info>
+
+## Development Tips
+
+### Debugging DynamoRIO Client
+
+The DrSemu.dll client runs inside the DynamoRIO process:
+
+1. Set LauncherCLI as startup project
+2. Enable DynamoRIO logging: Use `-verbose 2` option
+3. Use `dr_printf()` for logging from the client
+
+### Testing Isolation
+
+Test virtual filesystem:
+- Check files are redirected to virtual root
+- Verify registry keys are cloned to `virtual_reg/`
+
+### Code Structure
+
+Handler files:
+- `filesystem_handlers.hpp` - File system call handlers
+- `registry_handlers.hpp` - Registry call handlers
+- `process_handlers.hpp` - Process/thread handlers
+- `networking_handlers.hpp` - Network call handlers

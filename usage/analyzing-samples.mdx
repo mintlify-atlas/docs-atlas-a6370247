@@ -1,0 +1,318 @@
+---
+title: Analyzing Samples
+description: Step-by-step guide to analyzing malware samples with Dr.Semu
+---
+
+## Prerequisites
+
+<Check>
+  - Dr.Semu is properly installed (see [Installation](/getting-started/installation))
+  - You have **administrator privileges**
+  - Target sample is a Windows PE executable (.exe)
+</Check>
+
+## Basic Analysis Workflow
+
+### Step 1: Prepare Your Sample
+
+Place your malware sample in a dedicated directory:
+
+```bash
+mkdir C:\samples
+copy suspicious.exe C:\samples\
+```
+
+<Warning>
+  Always analyze malware samples in an isolated environment or virtual machine. Dr.Semu provides virtualization, but an additional layer of isolation is recommended.
+</Warning>
+
+### Step 2: Run the Analysis
+
+Open a command prompt **as Administrator** and execute:
+
+```bash
+cd C:\path\to\DrSemu
+LauncherCLI.exe --target "C:\samples\suspicious.exe"
+```
+
+### Step 3: Monitor the Analysis
+
+During analysis, you'll see real-time output in the console:
+
+```
+LauncherCLI for Dr.Semu
+[VM_1] Connecting to virtual FS/REG...
+[VM_1] Connected to virtual FS/REG!
+[VM_1] virtual FS/REG: SUCCESS
+[Dr.Semu] File path: C:\samples\suspicious.exe
+[VM_1] Fake Explorer is under Dr.Semu. PID: 4928
+[VM_1] Starter PID: 5124
+[VM_1] Running processes:
+        PID: 5124
+```
+
+#### What's Happening?
+
+1. **Virtual FS/REG initialization**: Creates an isolated filesystem and registry
+2. **Fake Explorer launch**: Starts a fake `explorer.exe` to simulate a real environment
+3. **Target execution**: Runs your sample under DynamoRIO instrumentation
+4. **Process tracking**: Monitors the sample and any child processes it creates
+
+### Step 4: Wait for Completion
+
+The analysis runs until:
+
+- All processes terminate naturally, OR
+- The time limit is reached (default: 120 seconds)
+
+```
+[VM_1] Running processes:
+        PID: 5124
+[VM_1] Fake Explorer [PID - 4928] terminated
+[event_exit] PID: 5124    Duration: 45 seconds
+
+ --- EOF PID: 5124 --- 
+```
+
+### Step 5: Review Results
+
+After completion, a modal dialog shows the verdict:
+
+```
+Verdict: MALICIOUS
+```
+
+Click OK to see the report location:
+
+```
+[VM_1] Reports: C:\path\to\DrSemu\xK3mP9nB2qR5vL7
+[VM_1] Scanning...
+Verdict: MALICIOUS
+```
+
+## Advanced Analysis Options
+
+### Custom Time Limit
+
+For samples that need longer execution:
+
+```bash
+LauncherCLI.exe --target "sample.exe" --time_limit 600
+```
+
+This allows the sample to run for 10 minutes.
+
+### Passing Command-Line Arguments
+
+Some malware requires specific arguments:
+
+```bash
+LauncherCLI.exe --target "installer.exe" --cmd_line "/install /silent"
+```
+
+### Analyzing Droppers
+
+For droppers that create child processes:
+
+```bash
+LauncherCLI.exe --target "dropper.exe" --time_limit 300
+```
+
+Dr.Semu automatically tracks all child processes:
+
+```
+[VM_1] Running processes:
+        PID: 5124
+        PID: 5896  # Child process
+        PID: 6204  # Another child
+```
+
+Each process gets its own JSON report.
+
+## Understanding Console Output
+
+### VM Instance Information
+
+```
+[VM_1] Connecting to virtual FS/REG...
+```
+
+- `VM_1`, `VM_2`, etc. indicate separate VM instances
+- When analyzing directories, each file gets its own VM
+
+### Process Lifecycle
+
+```
+[VM_1] Starter PID: 5124
+```
+
+The **Starter PID** is your main sample. Child processes are tracked automatically.
+
+### Analysis Duration
+
+```
+[event_exit] PID: 5124    Duration: 45 seconds
+```
+
+Shows how long each process ran.
+
+### Fake Explorer
+
+```
+[VM_1] Fake Explorer is under Dr.Semu. PID: 4928
+```
+
+Dr.Semu launches a fake `explorer.exe` to simulate a realistic Windows environment. This helps detect malware that checks for the Explorer process.
+
+## Report Generation
+
+Dr.Semu generates JSON reports for:
+
+1. **Each monitored process**: `<PID>.json`
+2. **Analysis metadata**: `starter.json`
+
+Example `starter.json`:
+
+```json
+{
+  "image_path": "C:\\samples\\suspicious.exe",
+  "starter_pid": 5124,
+  "explorer_pid": 4928,
+  "sha_256": "a1b2c3d4e5f6..."
+}
+```
+
+<Note>
+  Reports are generated in a temporary directory with a random name (e.g., `xK3mP9nB2qR5vL7`) and are **deleted after scanning** unless you preserve them manually.
+</Note>
+
+## Common Scenarios
+
+### Scenario 1: Packed Malware
+
+Packed samples may need more time to unpack:
+
+```bash
+LauncherCLI.exe --target "packed.exe" --time_limit 300
+```
+
+Watch for multiple processes as the unpacker creates new executables.
+
+### Scenario 2: Malware with Anti-Analysis
+
+Some malware checks for sandboxes. Dr.Semu's virtual FS/REG helps evade detection:
+
+```
+[VM_1] virtual FS/REG: SUCCESS
+```
+
+The sample runs in an isolated environment with a fake registry and filesystem.
+
+### Scenario 3: Ransomware
+
+Ransomware typically:
+
+1. Enumerates drives
+2. Creates encryption keys
+3. Modifies files
+
+Dr.Semu captures all file and registry operations:
+
+```json
+{
+  "category": "file",
+  "operation": "NtCreateFile",
+  "arguments": {
+    "file_path": "C:\\Users\\..."
+  }
+}
+```
+
+### Scenario 4: Information Stealers
+
+Look for network activity and registry queries:
+
+```json
+{
+  "category": "networking",
+  "operation": "InternetOpenUrlW",
+  "arguments": {
+    "url": "http://malicious.com/exfil"
+  }
+}
+```
+
+## Troubleshooting
+
+### "No such file/directory"
+
+Ensure the path is correct and the file exists:
+
+```bash
+# Check if file exists
+dir "C:\samples\suspicious.exe"
+```
+
+### "Invalid file extension"
+
+Dr.Semu only accepts `.exe` files. If you have a DLL or other format, you'll need to use a different analysis approach.
+
+### Analysis Hangs
+
+If the analysis appears stuck:
+
+1. Check if processes are still running (look for `PID: ...` output)
+2. Wait for the time limit to expire
+3. If completely frozen, kill `drrun.exe` processes
+
+### "Failed to create a slot"
+
+This indicates IPC issues. Try:
+
+1. Running as Administrator
+2. Restarting the analysis
+3. Checking for antivirus interference
+
+## Best Practices
+
+<AccordionGroup>
+  <Accordion title="Always Use Time Limits">
+    Set appropriate time limits based on sample type:
+    - **Simple droppers**: 120 seconds (default)
+    - **Installers**: 300 seconds
+    - **Complex malware**: 600+ seconds
+  </Accordion>
+  
+  <Accordion title="Preserve Reports">
+    Copy reports before the modal closes:
+    ```bash
+    # In another terminal while analysis runs
+    xcopy /E /I C:\path\to\DrSemu\<random_name> C:\reports\sample1\
+    ```
+  </Accordion>
+  
+  <Accordion title="Run in Isolated Environment">
+    Even with virtualization, analyze malware in:
+    - Dedicated analysis VM
+    - Air-gapped network
+    - Snapshotted system
+  </Accordion>
+  
+  <Accordion title="Monitor Resource Usage">
+    Some malware is resource-intensive. Monitor:
+    - CPU usage
+    - Disk I/O
+    - Memory consumption
+  </Accordion>
+</AccordionGroup>
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Batch Analysis" icon="layer-group" href="/usage/batch-analysis">
+    Analyze multiple samples efficiently
+  </Card>
+  <Card title="Understanding Reports" icon="file-chart-line" href="/usage/reports">
+    Deep dive into JSON report structure
+  </Card>
+</CardGroup>

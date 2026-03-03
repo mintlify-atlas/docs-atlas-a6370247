@@ -1,0 +1,397 @@
+---
+title: Process and Thread System Calls
+description: Process and thread-related system calls monitored by Dr.Semu
+---
+
+Dr.Semu monitors process and thread operations to track process creation, manipulation, and memory operations. Access controls prevent unauthorized process interactions.
+
+## Process Creation
+
+### NtCreateUserProcess
+
+Creates a new user-mode process.
+
+<ParamField path="ProcessHandle" type="PHANDLE">
+  Receives a handle to the new process
+</ParamField>
+
+<ParamField path="ThreadHandle" type="PHANDLE">
+  Receives a handle to the initial thread
+</ParamField>
+
+<ParamField path="ProcessDesiredAccess" type="ACCESS_MASK">
+  Desired access for the process
+</ParamField>
+
+<ParamField path="ThreadDesiredAccess" type="ACCESS_MASK">
+  Desired access for the thread
+</ParamField>
+
+<ParamField path="ProcessParameters" type="PRTL_USER_PROCESS_PARAMETERS" optional>
+  Process parameters including image path and command line
+</ParamField>
+
+<ParamField path="CreateInfo" type="PPS_CREATE_INFO">
+  Process creation information
+</ParamField>
+
+**Logged Information:**
+- Image path
+- Command line
+- Architecture (x86/x64)
+- Suspended state
+- Process ID (after creation)
+- Thread ID (after creation)
+- Operation success status
+
+**Special Handling:**
+- File paths are redirected to virtual filesystem
+- Cross-architecture execution is blocked
+- Child processes are automatically whitelisted
+- Injected with Dr.Semu for monitoring
+
+---
+
+### NtCreateProcess
+
+Creates a new process (legacy API).
+
+<ParamField path="ProcessHandle" type="PHANDLE">
+  Receives a handle to the new process
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access for the process
+</ParamField>
+
+<ParamField path="ParentProcess" type="HANDLE">
+  Handle to the parent process
+</ParamField>
+
+<ParamField path="SectionHandle" type="HANDLE" optional>
+  Optional handle to section object
+</ParamField>
+
+**Access Control:**
+Returns STATUS_NOT_IMPLEMENTED. Use NtCreateUserProcess instead.
+
+---
+
+### NtCreateProcessEx
+
+Extended version of NtCreateProcess.
+
+<ParamField path="ProcessHandle" type="PHANDLE">
+  Receives a handle to the new process
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access for the process
+</ParamField>
+
+<ParamField path="ParentProcess" type="HANDLE">
+  Handle to the parent process
+</ParamField>
+
+<ParamField path="Flags" type="ULONG">
+  Process creation flags
+</ParamField>
+
+**Access Control:**
+Returns STATUS_NOT_IMPLEMENTED.
+
+---
+
+## Process Access
+
+### NtOpenProcess
+
+Opens an existing process.
+
+<ParamField path="ProcessHandle" type="PHANDLE">
+  Receives a handle to the process
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Object attributes
+</ParamField>
+
+<ParamField path="ClientId" type="PCLIENT_ID" optional>
+  Process and thread IDs
+</ParamField>
+
+**Logged Information:**
+- Desired access
+- Process ID
+- Thread ID
+- Process handle (after successful operation)
+- Operation success status
+
+**Access Control:**
+- Only whitelisted processes can be opened
+- Attempts to open fake explorer are redirected to real explorer
+- Access to other processes is denied with STATUS_ACCESS_DENIED
+
+---
+
+### NtSuspendProcess
+
+Suspends all threads in a process.
+
+<ParamField path="ProcessHandle" type="HANDLE">
+  Handle to the process to suspend
+</ParamField>
+
+**Logged Information:**
+- Process handle
+- Process image path
+- Operation success status
+
+---
+
+## Thread Operations
+
+### NtOpenThread
+
+Opens an existing thread.
+
+<ParamField path="ThreadHandle" type="PHANDLE">
+  Receives a handle to the thread
+</ParamField>
+
+<ParamField path="DesiredAccess" type="ACCESS_MASK">
+  Desired access rights
+</ParamField>
+
+<ParamField path="ObjectAttributes" type="POBJECT_ATTRIBUTES">
+  Object attributes (ObjectName must be NULL)
+</ParamField>
+
+<ParamField path="ClientId" type="PCLIENT_ID" optional>
+  Process and thread IDs
+</ParamField>
+
+**Logged Information:**
+- Process ID
+- Thread ID
+- Thread handle (after successful operation)
+
+**Access Control:**
+- Only threads from whitelisted processes can be opened
+- Access attempts to other threads are denied
+
+---
+
+### NtDelayExecution
+
+Delays execution of the current thread.
+
+<ParamField path="Alertable" type="BOOLEAN">
+  Whether the delay is alertable
+</ParamField>
+
+<ParamField path="DelayInterval" type="PLARGE_INTEGER" optional>
+  Delay duration in 100-nanosecond intervals
+</ParamField>
+
+**Logged Information:**
+- Delay interval
+
+---
+
+### NtSetContextThread
+
+Sets the context of a thread.
+
+<ParamField path="ThreadHandle" type="HANDLE">
+  Handle to the thread
+</ParamField>
+
+<ParamField path="ThreadContext" type="PCONTEXT">
+  Thread context to set
+</ParamField>
+
+**Note:**
+Currently passes through without modification.
+
+---
+
+### NtContinue
+
+Continues execution after an exception.
+
+<ParamField path="ContextRecord" type="PCONTEXT">
+  Context to continue with
+</ParamField>
+
+<ParamField path="TestAlert" type="BOOLEAN">
+  Whether to test for alerts
+</ParamField>
+
+**Note:**
+Currently passes through without modification.
+
+---
+
+## Memory Operations
+
+### NtWriteVirtualMemory
+
+Writes data to the virtual memory of a process.
+
+<ParamField path="ProcessHandle" type="HANDLE">
+  Handle to the target process
+</ParamField>
+
+<ParamField path="BaseAddress" type="PVOID">
+  Base address to write to
+</ParamField>
+
+<ParamField path="Buffer" type="PVOID">
+  Buffer containing data to write
+</ParamField>
+
+<ParamField path="BufferSize" type="SIZE_T">
+  Number of bytes to write
+</ParamField>
+
+<ParamField path="NumberOfBytesWritten" type="PSIZE_T" optional>
+  Receives number of bytes actually written
+</ParamField>
+
+**Logged Information:**
+- Process ID
+- Target process image path
+- Operation success status
+
+**Access Control:**
+- Only whitelisted processes can be written to
+- Attempts to write to fake explorer are redirected
+- Other attempts are denied with STATUS_ACCESS_DENIED
+
+---
+
+### NtProtectVirtualMemory
+
+Changes memory protection for a region of virtual memory.
+
+<ParamField path="ProcessHandle" type="HANDLE">
+  Handle to the process
+</ParamField>
+
+<ParamField path="BaseAddress" type="PVOID*">
+  Pointer to base address of the region
+</ParamField>
+
+<ParamField path="RegionSize" type="PSIZE_T">
+  Pointer to size of the region
+</ParamField>
+
+<ParamField path="NewProtect" type="ULONG">
+  New protection flags (PAGE_EXECUTE, PAGE_READWRITE, etc.)
+</ParamField>
+
+<ParamField path="OldProtect" type="PULONG">
+  Receives the old protection flags
+</ParamField>
+
+**Logged Information:**
+- Process handle
+- Base address
+- New protection flags
+- Operation success status
+
+---
+
+### NtQueryVirtualMemory
+
+Retrieves information about virtual memory.
+
+<ParamField path="ProcessHandle" type="HANDLE">
+  Handle to the process
+</ParamField>
+
+<ParamField path="BaseAddress" type="PVOID" optional>
+  Base address to query
+</ParamField>
+
+<ParamField path="MemoryInformationClass" type="MEMORY_INFORMATION_CLASS">
+  Type of information to retrieve
+</ParamField>
+
+**Note:**
+Currently passes through without modification.
+
+---
+
+## Process Information
+
+### NtQueryInformationProcess
+
+Retrieves information about a process.
+
+<ParamField path="ProcessHandle" type="HANDLE">
+  Handle to the process
+</ParamField>
+
+<ParamField path="ProcessInformationClass" type="PROCESSINFOCLASS">
+  Type of information to retrieve
+</ParamField>
+
+<ParamField path="ProcessInformation" type="PVOID">
+  Buffer to receive the information
+</ParamField>
+
+<ParamField path="ProcessInformationLength" type="ULONG">
+  Size of the buffer
+</ParamField>
+
+<ParamField path="ReturnLength" type="PULONG" optional>
+  Receives the size of data returned
+</ParamField>
+
+**Logged Information:**
+- Process handle
+- Process name
+- Information class (e.g., ProcessBasicInformation, ProcessImageFileName)
+
+**Special Handling:**
+- Fake explorer paths are hidden and replaced with real explorer path
+- Parent process ID is masked for fake explorer processes
+- Supports various information classes:
+  - ProcessBasicInformation
+  - ProcessImageFileName
+  - ProcessImageFileNameWin32
+  - ProcessWow64Information
+  - ProcessMitigationPolicy
+  - ProcessDebugPort
+  - And more
+
+---
+
+### NtSetInformationProcess
+
+Sets information for a process.
+
+<ParamField path="ProcessHandle" type="HANDLE">
+  Handle to the process
+</ParamField>
+
+<ParamField path="ProcessInformationClass" type="PROCESSINFOCLASS">
+  Type of information to set
+</ParamField>
+
+<ParamField path="ProcessInformation" type="PVOID">
+  Buffer containing the information
+</ParamField>
+
+<ParamField path="ProcessInformationLength" type="ULONG">
+  Size of the buffer
+</ParamField>
+
+**Note:**
+Currently passes through without modification.

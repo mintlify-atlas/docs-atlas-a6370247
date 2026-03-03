@@ -1,0 +1,257 @@
+---
+title: Architecture
+description: Understanding Dr.Semu's system architecture and components
+---
+
+Dr.Semu's architecture consists of four main components that work together to provide isolated malware analysis. All components operate in user-mode without requiring kernel drivers or modifications.
+
+## System components
+
+<CardGroup cols={2}>
+  <Card title="LauncherCLI" icon="terminal" href="/usage/cli-reference">
+    Command-line interface and orchestration layer
+  </Card>
+  <Card title="virtual_FS_REG" icon="folder" href="/concepts/isolation">
+    Filesystem and registry virtualization
+  </Card>
+  <Card title="DrSemu Client" icon="magnifying-glass" href="/concepts/monitoring">
+    DynamoRIO-based instrumentation client
+  </Card>
+  <Card title="Detection Engine" icon="shield" href="/concepts/detection">
+    Lua and Python rule execution
+  </Card>
+</CardGroup>
+
+## Architecture overview
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                       LauncherCLI                            │
+│  • Process orchestration                                     │
+│  • Report management                                         │
+│  • Command-line interface                                    │
+└────────────┬────────────────────────────┬───────────────────┘
+             │                            │
+             ▼                            ▼
+┌────────────────────────┐   ┌───────────────────────────────┐
+│   virtual_FS_REG.exe   │   │      DynamoRIO Client         │
+│  • ProjFS provider     │   │  • System call interception   │
+│  • Registry cloning    │   │  • Behavior logging           │
+│  • Path redirection    │   │  • JSON output                │
+└────────────────────────┘   └───────────────────────────────┘
+             │                            │
+             └────────────┬───────────────┘
+                          ▼
+                ┌──────────────────┐
+                │  Target Process  │
+                │  (Isolated)      │
+                └──────────────────┘
+                          │
+                          ▼
+                ┌──────────────────┐
+                │  JSON Reports    │
+                └──────────────────┘
+                          │
+                          ▼
+                ┌──────────────────┐
+                │ Detection Engine │
+                │ (Lua/Python)     │
+                └──────────────────┘
+```
+
+## Component lifecycle
+
+### 1. Initialization phase
+
+<Steps>
+  <Step title="LauncherCLI starts">
+    The launcher parses command-line arguments and initializes the environment (LauncherCLI.cpp:59-180).
+  </Step>
+  
+  <Step title="Virtual environment setup">
+    Creates VM-specific temp directory (e.g., `dr_semu_0`) and launches `virtual_FS_REG.exe` with elevated privileges (LauncherCLI.cpp:196-227).
+  </Step>
+  
+  <Step title="Fake Explorer launch">
+    Starts a fake `explorer.exe` process to serve as the parent for malware that checks process hierarchy (LauncherCLI.cpp:267-325).
+  </Step>
+</Steps>
+
+### 2. Execution phase
+
+<Steps>
+  <Step title="Target launch">
+    Target executable is launched under DynamoRIO with the Dr.Semu client DLL (LauncherCLI.cpp:584-668).
+  </Step>
+  
+  <Step title="System call interception">
+    DynamoRIO intercepts system calls before they enter the kernel (DrSemu.cpp:414-741).
+  </Step>
+  
+  <Step title="Behavior logging">
+    Each intercepted call is logged to a JSON structure with parameters and results (DrSemu/utils.hpp).
+  </Step>
+</Steps>
+
+### 3. Analysis phase
+
+<Steps>
+  <Step title="Process termination">
+    Target process completes or is terminated after time limit (DrSemu.cpp:34-40).
+  </Step>
+  
+  <Step title="Report generation">
+    JSON reports are written for each monitored process (DrSemu.cpp:369-392).
+  </Step>
+  
+  <Step title="Rule execution">
+    Detection engine runs Lua and Python rules against the collected data (run_detections/run_detections.cpp:16-69).
+  </Step>
+</Steps>
+
+## Communication mechanisms
+
+### Mailslots
+
+Dr.Semu uses Windows mailslots for inter-process communication:
+
+```cpp
+// LauncherCLI.cpp:186-191
+const auto main_mailslot_name = launchercli::get_true_random_string(20);
+dr_semu::shared::slot main_mailslot(main_mailslot_name);
+```
+
+Mailslots facilitate:
+- Process tracking (`add` and `remove` commands)
+- Status reporting from instrumented processes
+- Synchronization between components
+
+### Named pipes
+
+Named pipes connect the launcher with the virtual filesystem provider:
+
+```cpp
+// LauncherCLI.cpp:203-209
+const auto pipe_name = launchercli::get_true_random_string(15);
+dr_semu::shared::pipe virtual_fs_pipe(pipe_name);
+```
+
+Used for:
+- Virtual environment initialization
+- Configuration handshake
+- Cleanup coordination
+
+### Events
+
+Named events signal process termination:
+
+```cpp
+// LauncherCLI.cpp:284-291
+const auto explorer_event_name = launchercli::get_true_random_string(15);
+const auto explorer_kill_event = CreateEvent(nullptr, FALSE, FALSE, 
+                                              explorer_event_name.c_str());
+```
+
+## Data flow
+
+### Input
+
+1. **Target executable** - Malware sample or suspicious file
+2. **Command-line arguments** - Optional parameters passed to target
+3. **Detection rules** - Lua/Python scripts in `dr_rules/` directory
+
+### Processing
+
+1. **System call interception** - Capture all filesystem, registry, process, and network operations
+2. **Path translation** - Redirect operations to virtual environment
+3. **Behavior logging** - Record parameters, return values, and timestamps
+
+### Output
+
+1. **Starter report** (`starter.json`) - Process hierarchy and metadata
+2. **Dynamic reports** (`{pid}.json`) - Per-process behavior logs
+3. **Static reports** (`{sha256}.json`) - PE file analysis
+4. **Detection verdict** - Classification result from rules
+
+## Isolation boundaries
+
+<Note>
+All isolation is implemented in user-mode without kernel components.
+</Note>
+
+### Filesystem boundary
+
+- **Mechanism**: Windows Projected File System (ProjFS)
+- **Implementation**: `virtual_FS_REG/virtualizationInstance.cpp`
+- **Scope**: All file operations are redirected to `%TEMP%\dr_semu_{vm_index}\`
+
+### Registry boundary
+
+- **Mechanism**: Hive cloning and path rewriting
+- **Implementation**: `virtual_FS_REG/virtual_reg.cpp`
+- **Scope**: All registry keys are prefixed with `dr_semu_{vm_index}!`
+
+### Process boundary
+
+- **Mechanism**: Process tracking and handle filtering
+- **Implementation**: `DrSemu/process_handlers.hpp`
+- **Scope**: Child processes are automatically instrumented; external processes are hidden
+
+### Network boundary
+
+- **Mechanism**: Optional internet blocking
+- **Implementation**: `DrSemu/networking_handlers.hpp`
+- **Scope**: Configurable via `disable_internet` flag (DrSemu.cpp:148)
+
+## Multi-sample support
+
+Dr.Semu supports concurrent analysis through VM isolation:
+
+```cpp
+// LauncherCLI.cpp:476-487
+std::vector<std::thread> threads{};
+size_t vm_index = 1;
+for (const auto& current_application : target_directory_files) {
+    threads.emplace_back(vm_thread_function, current_application, vm_index);
+    vm_index++;
+}
+```
+
+Each VM gets:
+- Unique virtual filesystem root
+- Separate registry hives
+- Independent process tracking
+- Isolated report directory
+
+## Performance considerations
+
+### Resource usage
+
+- **CPU**: 2-10x overhead from DynamoRIO instrumentation
+- **Memory**: Additional RAM for virtual filesystem cache and DynamoRIO code cache
+- **Disk**: Temporary files in `%TEMP%` for each VM instance
+- **I/O**: Registry cloning adds ~5-10 seconds startup time
+
+### Optimization strategies
+
+1. **Parallel analysis**: Run multiple samples concurrently (limited by CPU cores)
+2. **Cache reuse**: Registry hives can be cached with `use_cache` parameter
+3. **Time limits**: Set appropriate timeouts to prevent indefinite execution
+4. **Selective monitoring**: Only configured system calls are intercepted
+
+## See also
+
+<CardGroup cols={2}>
+  <Card title="Isolation mechanisms" icon="lock" href="/concepts/isolation">
+    Deep dive into ProjFS and registry virtualization
+  </Card>
+  <Card title="Monitoring" icon="eye" href="/concepts/monitoring">
+    System call interception with DynamoRIO
+  </Card>
+  <Card title="Detection rules" icon="book" href="/rules/overview">
+    Writing and running detection rules
+  </Card>
+  <Card title="Building from source" icon="hammer" href="/advanced/building-from-source">
+    Build and customize Dr.Semu
+  </Card>
+</CardGroup>
